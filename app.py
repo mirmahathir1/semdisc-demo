@@ -5,6 +5,7 @@ import itertools
 import hashlib
 import time
 import zipfile
+from contextlib import nullcontext
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -256,6 +257,17 @@ def _load_datalake_from_zip(zip_bytes: bytes) -> Dict[str, pd.DataFrame]:
     return tables
 
 
+def _token_for_uploaded_files(files: Sequence) -> Optional[str]:
+    if not files:
+        return None
+    h = hashlib.md5()
+    for f in files:
+        name = str(getattr(f, "name", "")).encode("utf-8", errors="ignore")
+        h.update(name)
+        h.update(b"\0")
+    return h.hexdigest()
+
+
 def _ensure_nonempty_tables(tables: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     cleaned = {}
     for k, df in tables.items():
@@ -272,6 +284,20 @@ def _ensure_nonempty_tables(tables: Dict[str, pd.DataFrame]) -> Dict[str, pd.Dat
             continue
         cleaned[k] = df2
     return cleaned
+
+
+def _drop_fully_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or df.shape[1] == 0:
+        return df
+    df2 = df.copy()
+    # Normalize whitespace-only strings to NA for object/string columns, then drop rows that
+    # are blank across all columns.
+    obj_cols = df2.select_dtypes(include=["object", "string"]).columns
+    if len(obj_cols) > 0:
+        df2[obj_cols] = df2[obj_cols].astype("string").apply(lambda s: s.str.strip())
+        df2[obj_cols] = df2[obj_cols].replace(r"^\s*$", pd.NA, regex=True)
+    df2 = df2.dropna(how="all")
+    return df2
 
 
 def _format_path(path: Sequence[str], edges: Sequence[EdgeInfo]) -> str:
@@ -301,16 +327,28 @@ def _token_for_bytes(b: bytes) -> str:
     return hashlib.md5(b).hexdigest()
 
 
-def _simulate_preprocessing(steps: Sequence[str], seconds_per_step: float = 0.25) -> None:
-    progress = st.progress(0, text="Preprocessing...")
-    with st.status("Preprocessing", expanded=True) as status:
-        for i, step in enumerate(steps, start=1):
-            with st.spinner(step):
-                time.sleep(seconds_per_step)
-            status.write(f"✓ {step}")
-            progress.progress(int(100 * i / max(len(steps), 1)), text="Preprocessing...")
-        status.update(label="Preprocessing complete", state="complete", expanded=False)
-    progress.empty()
+def _simulate_preprocessing(
+    steps: Sequence[str],
+    seconds_per_step: float = 0.25,
+    *,
+    container=None,
+    log_key: str = "preprocess_log",
+) -> None:
+    st.session_state[log_key] = []
+
+    scope = container.container() if container is not None else nullcontext()
+    with scope:
+        progress = st.progress(0, text="Preprocessing...")
+        with st.status("Preprocessing", expanded=True) as status:
+            for i, step in enumerate(steps, start=1):
+                with st.spinner(step):
+                    time.sleep(seconds_per_step)
+                line = f"✓ {step}"
+                st.session_state[log_key].append(line)
+                status.write(line)
+                progress.progress(int(100 * i / max(len(steps), 1)), text="Preprocessing...")
+            status.update(label="Preprocessing complete", state="complete", expanded=False)
+        progress.empty()
 
 
 def _render_brand_header() -> None:
@@ -341,6 +379,65 @@ def _render_brand_header() -> None:
         st.caption("Semantic discovery of joinable tables and join paths.")
 
 
+def _render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
+    css = """
+<style>
+  .sd-stepper { margin-top: 0.75rem; margin-bottom: 0.75rem; }
+  .sd-step { display: flex; align-items: center; gap: 0.65rem; }
+  .sd-col { display: flex; flex-direction: column; align-items: center; width: 24px; }
+  .sd-circle {
+    width: 18px; height: 18px; border-radius: 999px;
+    border: 2px solid #9CA3AF; background: #ffffff;
+    box-sizing: border-box;
+  }
+  .sd-circle.done { background: #22C55E; border-color: #16A34A; }
+  .sd-circle.current {
+    background: #22C55E; border-color: #16A34A;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.28), 0 0 12px rgba(34, 197, 94, 0.55);
+  }
+  .sd-circle.todo { background: #ffffff; border-color: #9CA3AF; }
+  .sd-line {
+    width: 3px; flex: 1; min-height: 22px;
+    background: #D1D5DB; border-radius: 999px;
+    margin: 4px 0;
+  }
+  .sd-line.done { background: #22C55E; }
+  .sd-label { font-size: 0.90rem; color: #111827; line-height: 1.1; }
+  .sd-label.current { font-weight: 750; }
+  .sd-label.todo { color: #4B5563; }
+</style>
+""".strip()
+
+    lines = ['<div class="sd-stepper">']
+    for i, label in enumerate(stage_labels):
+        circle_cls = "todo"
+        label_cls = "todo"
+        if i < current_idx:
+            circle_cls = "done"
+            label_cls = ""
+        elif i == current_idx:
+            circle_cls = "current"
+            label_cls = "current"
+
+        lines.append('<div class="sd-step">')
+        lines.append('<div class="sd-col">')
+        lines.append(f'<div class="sd-circle {circle_cls}"></div>')
+        if i < len(stage_labels) - 1:
+            seg_cls = "done" if i < current_idx else ""
+            lines.append(f'<div class="sd-line {seg_cls}"></div>')
+        lines.append("</div>")
+        lines.append(f'<div class="sd-label {label_cls}">{label}</div>')
+        lines.append("</div>")
+    lines.append("</div>")
+
+    st.sidebar.markdown(css + "\n" + "\n".join(lines), unsafe_allow_html=True)
+
+
+def _goto_stage(idx: int) -> None:
+    st.session_state.page_idx = int(max(0, min(3, idx)))
+    st.rerun()
+
+
 def main() -> None:
     st.set_page_config(page_title="SemDisc", layout="wide")
     _render_brand_header()
@@ -364,6 +461,8 @@ def main() -> None:
     st.session_state.setdefault("ret_min_edge_score", float(st.session_state.hp_join_edge_threshold))
     st.session_state.setdefault("ret_max_hops", int(st.session_state.hp_simple_path_max_length))
     st.session_state.setdefault("ret_top_k", 10)
+    st.session_state.setdefault("page_idx", 0)
+    st.session_state.setdefault("preprocess_log", [])
 
     # Always keep a prepopulated query table available by default.
     if st.session_state.query_df is None:
@@ -371,66 +470,94 @@ def main() -> None:
         st.session_state.query_ready = False
         st.session_state.query_submitted = False
 
-    # Left bar: navigation only (radio buttons)
-    page = st.sidebar.radio(
-        "Navigation",
-        options=[
-            "Upload and Preprocess",
-            "Navigate Processed Data",
-            "Input Query Table",
-            "Retrieved Join Paths",
-        ],
-        label_visibility="collapsed",
-    )
+    stage_labels = [
+        "Upload & Preprocess",
+        "Navigate Processed Data",
+        "Input Query Table",
+        "Retrieved Join Paths",
+    ]
+    page_idx = int(st.session_state.page_idx)
+    page_idx = max(0, min(3, page_idx))
+    st.session_state.page_idx = page_idx
+    _render_stage_stepper(current_idx=page_idx, stage_labels=stage_labels)
 
-    if page == "Upload and Preprocess":
-        st.subheader("Upload and Preprocess")
-        zip_file = st.file_uploader("Data lake (ZIP of CSV files)", type=["zip"])
+    if page_idx == 0:
+        left_col, right_col = st.columns([0.62, 0.38], gap="large")
 
-        st.subheader("Hyperparameters")
-        c3, c4 = st.columns(2)
-        with c3:
-            st.session_state.hp_simhash_size = st.slider(
-                "SimHash size (bits)",
-                min_value=32,
-                max_value=512,
-                value=int(st.session_state.hp_simhash_size),
-                step=32,
-            )
-            st.session_state.hp_num_hashes_minhash = st.slider(
-                "Number of hashes for MinHash",
-                min_value=16,
-                max_value=512,
-                value=int(st.session_state.hp_num_hashes_minhash),
-                step=16,
-            )
-            st.session_state.hp_simple_path_max_length = st.slider(
-                "Simple path max length",
-                min_value=1,
-                max_value=5,
-                value=int(st.session_state.hp_simple_path_max_length),
-                step=1,
-            )
-        with c4:
-            st.session_state.hp_join_edge_threshold = st.slider(
-                "Join edge threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(st.session_state.hp_join_edge_threshold),
-                step=0.01,
-            )
-            st.session_state.hp_semantic_type_similarity_threshold = st.slider(
-                "Semantic type similarity threshold",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(st.session_state.hp_semantic_type_similarity_threshold),
-                step=0.01,
+        with right_col:
+            st.subheader("Preprocessing updates")
+            updates_placeholder = st.empty()
+
+            def _render_preprocess_updates() -> None:
+                log = list(st.session_state.get("preprocess_log", []) or [])
+                with updates_placeholder.container():
+                    if log:
+                        st.code("\n".join(log[-200:]), language="text")
+                    else:
+                        st.caption("No preprocessing run yet.")
+
+            _render_preprocess_updates()
+
+        with left_col:
+            st.subheader("Upload and Preprocess")
+            uploaded_files = st.file_uploader(
+                "Data lake folder (upload CSV files)",
+                type=["csv"],
+                accept_multiple_files=True,
+                help="Streamlit can't directly upload a folder. Upload any CSV file(s) from the folder to unlock preprocessing (the demo run uses the bundled sample data).",
             )
 
-        col1, col2 = st.columns([0.6, 0.4])
-        with col1:
-            preprocess_clicked = st.button("Preprocess", type="primary", use_container_width=True)
-        with col2:
+            st.subheader("Hyperparameters")
+            c3, c4, c5 = st.columns(3)
+            with c3:
+                st.session_state.hp_simhash_size = st.slider(
+                    "SimHash size (bits)",
+                    min_value=32,
+                    max_value=512,
+                    value=int(st.session_state.hp_simhash_size),
+                    step=32,
+                )
+                st.session_state.hp_join_edge_threshold = st.slider(
+                    "Join edge threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.hp_join_edge_threshold),
+                    step=0.01,
+                )
+            with c4:
+                st.session_state.hp_num_hashes_minhash = st.slider(
+                    "Number of hashes for MinHash",
+                    min_value=16,
+                    max_value=512,
+                    value=int(st.session_state.hp_num_hashes_minhash),
+                    step=16,
+                )
+                st.session_state.hp_semantic_type_similarity_threshold = st.slider(
+                    "Semantic type similarity threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.hp_semantic_type_similarity_threshold),
+                    step=0.01,
+                )
+            with c5:
+                st.session_state.hp_simple_path_max_length = st.slider(
+                    "Simple path max length",
+                    min_value=1,
+                    max_value=5,
+                    value=int(st.session_state.hp_simple_path_max_length),
+                    step=1,
+                )
+
+            preprocess_disabled = not uploaded_files
+            if preprocess_disabled:
+                st.info("Upload your data lake CSV files to enable preprocessing.")
+
+            preprocess_clicked = st.button(
+                "Preprocess",
+                type="primary",
+                use_container_width=True,
+                disabled=preprocess_disabled,
+            )
             reset_clicked = st.button("Reset processed data", use_container_width=True)
 
         if reset_clicked:
@@ -438,10 +565,7 @@ def main() -> None:
             st.session_state.tables = {}
             st.session_state.datalake_token = None
 
-        uploaded_zip_bytes: Optional[bytes] = zip_file.getvalue() if zip_file is not None else None
-        uploaded_token: Optional[str] = (
-            _token_for_bytes(uploaded_zip_bytes) if uploaded_zip_bytes is not None else None
-        )
+        uploaded_token: Optional[str] = _token_for_uploaded_files(uploaded_files)
 
         if uploaded_token is not None and st.session_state.datalake_token != uploaded_token:
             # New upload selected; invalidate prior processed results.
@@ -467,12 +591,13 @@ def main() -> None:
                 12: "Building join path index",
             }
             steps = [routine_steps[i] for i in range(0, 13) if i in routine_steps]
-            _simulate_preprocessing(steps=steps)
+            _simulate_preprocessing(steps=steps, container=updates_placeholder)
+            _render_preprocess_updates()
 
-            if uploaded_zip_bytes is not None:
-                tables = _load_datalake_from_zip(uploaded_zip_bytes)
-            else:
-                tables = _bundled_datalake()
+            if not uploaded_files:
+                st.warning("Please upload your data lake CSV files before preprocessing.")
+                return
+            tables = _bundled_datalake()
             tables = _ensure_nonempty_tables(tables)
             if not tables:
                 st.error("No tables found in the data lake.")
@@ -490,12 +615,23 @@ def main() -> None:
         else:
             st.info("Click **Preprocess** to load and prepare the data lake.")
 
+        if st.session_state.processed_ready:
+            if st.button("Proceed to next stage", type="primary", use_container_width=True):
+                _goto_stage(1)
+
         return
 
-    if page == "Navigate Processed Data":
+    if page_idx == 1:
         st.subheader("Navigate Processed Data")
         if not st.session_state.processed_ready:
             st.info("Go to **Upload and Preprocess** first.")
+            c_nav1, c_nav2 = st.columns([0.45, 0.55])
+            with c_nav1:
+                if st.button("Back to previous stage", use_container_width=True):
+                    _goto_stage(0)
+            with c_nav2:
+                if st.button("Proceed to next stage", type="primary", use_container_width=True):
+                    st.warning("Please run **Preprocess** before proceeding.")
             return
 
         tables: Dict[str, pd.DataFrame] = st.session_state.tables
@@ -506,83 +642,130 @@ def main() -> None:
 
         graph = _build_join_graph(tables, min_edge_score=nav_min_edge_score)
 
+        # Compute "all" join paths by enumerating top-k paths from every start table,
+        # then deduplicate and globally sort by score.
+        paths: List[Tuple[List[str], float, List[EdgeInfo]]] = []
+        if graph:
+            by_nodes: Dict[Tuple[str, ...], Tuple[List[str], float, List[EdgeInfo]]] = {}
+            for start_table in sorted(tables.keys()):
+                for nodes, score, edges in _simple_paths_topk(
+                    graph=graph,
+                    start=start_table,
+                    max_hops=nav_max_hops,
+                    k=nav_top_k_per_table,
+                ):
+                    if len(nodes) <= 1:
+                        continue
+                    key = tuple(nodes)
+                    prev = by_nodes.get(key)
+                    if prev is None or score > prev[1]:
+                        by_nodes[key] = (nodes, score, edges)
+            paths = sorted(by_nodes.values(), key=lambda x: x[1], reverse=True)
+
         top_left, top_right = st.columns([0.52, 0.48], gap="large")
 
         with top_left:
             st.subheader("Table preview")
             table_name = st.selectbox("Table", options=sorted(tables.keys()))
-            df = tables[table_name]
+            df = _drop_fully_blank_rows(tables[table_name])
             st.write(f"Rows: {df.shape[0]} • Cols: {df.shape[1]}")
-            st.dataframe(df, use_container_width=True, height=420)
+            # Show ~5 rows worth of height; remaining rows are scrollable within the table.
+            header_px = 36
+            row_px = 35
+            preview_rows = 5
+            table_height = header_px + row_px * max(1, min(preview_rows, int(df.shape[0])))
+            st.dataframe(df, use_container_width=True, height=table_height)
 
         with top_right:
-            st.subheader("Join graph")
-            st.graphviz_chart(_to_dot(graph), use_container_width=True)
-            st.caption("Edge labels show the join key and a join-strength score.")
+            st.subheader("Join paths")
+            if not graph:
+                st.warning("No join edges found with the current settings.")
+            elif not paths:
+                st.warning("No join paths found with the current settings.")
+            else:
+                st.markdown(
+                    """
+<style>
+  .sd-pathcard { border: 1px solid #E5E7EB; background: #FFFFFF; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+  .sd-pathhead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .sd-rank { font-weight: 750; color: #111827; }
+  .sd-score { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; color: #111827; }
+  .sd-meta { font-size: 0.86rem; color: #374151; margin-top: 6px; }
+  .sd-path { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.86rem; color: #111827; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 10px; padding: 8px; }
+  .sd-pathgraph-container { height: 320px; overflow: auto; margin-top: 16px; }
+  .sd-pathgraph-container div[data-testid="stGraphVizChart"] { height: 320px; overflow: auto; }
+  .sd-pathgraph-container div[data-testid="stGraphVizChart"] svg { height: 320px !important; width: auto !important; }
+</style>
+""",
+                    unsafe_allow_html=True,
+                )
+
+                # Render a per-path button + HTML card in a loop (no dropdown).
+                st.session_state.setdefault("nav_selected_path_idx", 0)
+                selected_idx = int(st.session_state.nav_selected_path_idx or 0)
+                selected_idx = max(0, min(selected_idx, len(paths) - 1))
+                st.session_state.nav_selected_path_idx = selected_idx
+
+                # CSS for styling path cards
+                st.markdown(
+                    """
+<style>
+  .sd-pathcard { border: 1px solid #E5E7EB; background: #FFFFFF; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+  .sd-pathhead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .sd-rank { font-weight: 750; color: #111827; }
+  .sd-score { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; color: #111827; }
+  .sd-meta { font-size: 0.86rem; color: #374151; margin-top: 6px; }
+  .sd-path { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.86rem; color: #111827; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 10px; padding: 8px; }
+</style>
+""",
+                    unsafe_allow_html=True,
+                )
+                
+                # Use Streamlit's native scrollable container (height parameter)
+                with st.container(height=480, border=True):
+                    for idx, (nodes, score, edges) in enumerate(paths):
+                        if len(nodes) <= 1:
+                            continue
+                        rank = idx + 1
+                        hops = len(nodes) - 1
+                        join_keys = ", ".join([e.key for e in edges]) if edges else ""
+                        path_txt = " -> ".join(nodes)
+                        
+                        bcol, ccol = st.columns([0.22, 0.78], vertical_alignment="top")
+                        with bcol:
+                            label = "Showing" if idx == selected_idx else "Show join path"
+                            if st.button(label, key=f"nav_show_join_path_{rank}", use_container_width=True):
+                                st.session_state.nav_selected_path_idx = idx
+                                st.rerun()
+                        with ccol:
+                            card_bg = "#EFF6FF" if idx == selected_idx else "#FFFFFF"
+                            card_html = "\n".join(
+                                [
+                                    f'<div class="sd-pathcard" style="background: {card_bg};">',
+                                    '<div class="sd-pathhead">',
+                                    f'<div class="sd-rank">#{rank} • {nodes[0]} → {nodes[-1]} • {hops} hop{"s" if hops != 1 else ""}</div>',
+                                    f'<div class="sd-score">{float(score):.4f}</div>',
+                                    "</div>",
+                                    f'<div class="sd-meta"><b>Join keys:</b> {join_keys if join_keys else "—"}</div>',
+                                    f'<div class="sd-path">{path_txt}</div>',
+                                    "</div>",
+                                ]
+                            )
+                            st.markdown(card_html, unsafe_allow_html=True)
+
+                # Render selected path graph
+                nodes, _score, edges = paths[selected_idx]
+                st.subheader(f"Path graph (#{selected_idx + 1})")
+                st.markdown('<div class="sd-pathgraph-container">', unsafe_allow_html=True)
+                st.graphviz_chart(_path_to_dot(nodes, edges), use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
         st.divider()
-        st.subheader("Join path index")
-        if not graph:
-            st.warning("No join edges found with the current settings.")
-            return
-
-        start_table = st.selectbox(
-            "Start table",
-            options=sorted(tables.keys()),
-            help="Paths are enumerated from this start table.",
-            key="nav_start_table",
-        )
-
-        paths = _simple_paths_topk(
-            graph=graph,
-            start=start_table,
-            max_hops=nav_max_hops,
-            k=nav_top_k_per_table,
-        )
-
-        if not paths:
-            st.warning("No join paths found from the selected start table.")
-            return
-
-        rows = []
-        for rank, (nodes, score, edges) in enumerate(paths, start=1):
-            if len(nodes) <= 1:
-                continue
-            rows.append(
-                {
-                    "rank": rank,
-                    "start": nodes[0],
-                    "end": nodes[-1],
-                    "hops": len(nodes) - 1,
-                    "path": " -> ".join(nodes),
-                    "join_keys": ", ".join([e.key for e in edges]) if edges else "",
-                }
-            )
-
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=320)
-
-        st.session_state.setdefault("nav_path_graph_rank", None)
-        st.markdown("**Path graphs**")
-        for rank, (nodes, _score, edges) in enumerate(paths, start=1):
-            if len(nodes) <= 1:
-                continue
-            label = f"#{rank}: {nodes[0]} → {nodes[-1]}  ({len(nodes)-1} hops)"
-            c_btn, c_txt = st.columns([0.22, 0.78], vertical_alignment="center")
-            with c_btn:
-                if st.button("Show path graph", key=f"nav_show_path_{rank}"):
-                    st.session_state.nav_path_graph_rank = rank
-            with c_txt:
-                st.code(" -> ".join(nodes), language="text")
-
-        if st.session_state.nav_path_graph_rank is not None:
-            r = int(st.session_state.nav_path_graph_rank)
-            if 1 <= r <= len(paths):
-                nodes, _score, edges = paths[r - 1]
-                st.subheader(f"Path graph (#{r})")
-                st.graphviz_chart(_path_to_dot(nodes, edges), use_container_width=True)
+        if st.button("Proceed to next stage", type="primary", use_container_width=True):
+            _goto_stage(2)
         return
 
-    if page == "Input Query Table":
+    if page_idx == 2:
         st.subheader("Input Query Table")
         c1, c2 = st.columns([0.5, 0.5])
         with c1:
@@ -605,15 +788,29 @@ def main() -> None:
         st.dataframe(qdf.head(200), use_container_width=True, height=420)
         if not st.session_state.query_submitted:
             st.info("Click **Submit query table**, then proceed to **Retrieved Join Paths**.")
+        c_nav1, c_nav2 = st.columns([0.45, 0.55])
+        with c_nav1:
+            if st.button("Back to previous stage", use_container_width=True):
+                _goto_stage(1)
+        with c_nav2:
+            if st.button("Proceed to next stage", type="primary", use_container_width=True):
+                if not st.session_state.query_submitted:
+                    st.warning("Please **Submit query table** before proceeding.")
+                else:
+                    _goto_stage(3)
         return
 
     # Retrieved Join Paths
     st.subheader("Retrieved Join Paths")
     if not st.session_state.processed_ready:
         st.info("Go to **Upload and Preprocess** first.")
+        if st.button("Back to previous stage", use_container_width=True):
+            _goto_stage(0)
         return
     if not st.session_state.query_submitted or st.session_state.query_df is None:
         st.info("Go to **Input Query Table** first.")
+        if st.button("Back to previous stage", use_container_width=True):
+            _goto_stage(2)
         return
 
     tables = st.session_state.tables
@@ -702,6 +899,14 @@ def main() -> None:
         file_name="materialized.csv",
         mime="text/csv",
     )
+    st.divider()
+    c_nav1, c_nav2 = st.columns([0.45, 0.55])
+    with c_nav1:
+        if st.button("Back to previous stage", use_container_width=True):
+            _goto_stage(2)
+    with c_nav2:
+        if st.button("Proceed to next stage (restart)", type="primary", use_container_width=True):
+            _goto_stage(0)
 
 
 if __name__ == "__main__":
