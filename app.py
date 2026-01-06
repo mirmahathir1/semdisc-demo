@@ -622,7 +622,6 @@ def main() -> None:
         return
 
     if page_idx == 1:
-        st.subheader("Navigate Processed Data")
         if not st.session_state.processed_ready:
             st.info("Go to **Upload and Preprocess** first.")
             c_nav1, c_nav2 = st.columns([0.45, 0.55])
@@ -635,7 +634,6 @@ def main() -> None:
             return
 
         tables: Dict[str, pd.DataFrame] = st.session_state.tables
-        st.write(f"{len(tables)} tables available.")
         nav_min_edge_score = float(st.session_state.nav_min_edge_score)
         nav_max_hops = int(st.session_state.nav_max_hops)
         nav_top_k_per_table = 10
@@ -692,7 +690,7 @@ def main() -> None:
   .sd-score { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; color: #111827; }
   .sd-meta { font-size: 0.86rem; color: #374151; margin-top: 6px; }
   .sd-path { margin-top: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.86rem; color: #111827; background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 10px; padding: 8px; }
-  .sd-pathgraph-container { height: 320px; overflow: auto; margin-top: 16px; }
+  .sd-pathgraph-container { height: 320px; overflow: auto; margin-top: 0; }
   .sd-pathgraph-container div[data-testid="stGraphVizChart"] { height: 320px; overflow: auto; }
   .sd-pathgraph-container div[data-testid="stGraphVizChart"] svg { height: 320px !important; width: auto !important; }
 </style>
@@ -722,7 +720,7 @@ def main() -> None:
                 )
                 
                 # Use Streamlit's native scrollable container (height parameter)
-                with st.container(height=480, border=True):
+                with st.container(height=560, border=True):
                     for idx, (nodes, score, edges) in enumerate(paths):
                         if len(nodes) <= 1:
                             continue
@@ -752,13 +750,10 @@ def main() -> None:
                                 ]
                             )
                             st.markdown(card_html, unsafe_allow_html=True)
-
-                # Render selected path graph
-                nodes, _score, edges = paths[selected_idx]
-                st.subheader(f"Path graph (#{selected_idx + 1})")
-                st.markdown('<div class="sd-pathgraph-container">', unsafe_allow_html=True)
-                st.graphviz_chart(_path_to_dot(nodes, edges), use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # Render join path graph inline right below the selected card
+                        if idx == selected_idx:
+                            st.graphviz_chart(_path_to_dot(nodes, edges), use_container_width=True)
 
         st.divider()
         if st.button("Proceed to next stage", type="primary", use_container_width=True):

@@ -574,14 +574,14 @@ def main() -> None:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, height=320)
 
         st.session_state.setdefault("nav_path_graph_rank", None)
-        st.markdown("**Path graphs**")
+        st.markdown("**Join Paths**")
         for rank, (nodes, _score, edges) in enumerate(paths, start=1):
             if len(nodes) <= 1:
                 continue
             label = f"#{rank}: {nodes[0]} → {nodes[-1]}  ({len(nodes)-1} hops)"
             c_btn, c_txt = st.columns([0.22, 0.78], vertical_alignment="center")
             with c_btn:
-                if st.button("Show path graph", key=f"nav_show_path_{rank}"):
+                if st.button("Show join path", key=f"nav_show_path_{rank}"):
                     st.session_state.nav_path_graph_rank = rank
             with c_txt:
                 st.code(" -> ".join(nodes), language="text")
@@ -590,7 +590,7 @@ def main() -> None:
             r = int(st.session_state.nav_path_graph_rank)
             if 1 <= r <= len(paths):
                 nodes, _score, edges = paths[r - 1]
-                st.subheader(f"Path graph (#{r})")
+                st.subheader(f"Join Path (#{r})")
                 st.graphviz_chart(_path_to_dot(nodes, edges), use_container_width=True)
         return
 
