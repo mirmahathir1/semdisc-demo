@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +11,91 @@ from utils import bundled_query, goto_stage
 def render() -> None:
     """Render Stage 2: Input Query Table."""
     st.subheader("Input Query Table")
+    
+    # Add custom CSS and JavaScript for semantic type expander styling and scrollable table
+    st.markdown("""
+        <style>
+            /* Style the semantic type expander with custom class */
+            .semantic-type-expander {
+                border: 2px solid #FDBA74 !important;
+                border-radius: 12px !important;
+                background: linear-gradient(135deg, #FFFBEB 0%, #FFF7ED 100%) !important;
+                box-shadow: 0 4px 6px rgba(249, 115, 22, 0.1) !important;
+                margin-bottom: 16px !important;
+                overflow: hidden !important;
+            }
+            /* Target expander header button */
+            .semantic-type-expander button[aria-expanded] {
+                background: linear-gradient(135deg, #F97316 0%, #FDBA74 100%) !important;
+                border-radius: 10px 10px 0 0 !important;
+                padding: 12px 16px !important;
+                color: white !important;
+                font-weight: 600 !important;
+                font-size: 1.05em !important;
+                border: none !important;
+                width: 100% !important;
+            }
+            /* Style expander header on hover */
+            .semantic-type-expander button[aria-expanded]:hover {
+                background: linear-gradient(135deg, #EA580C 0%, #F97316 100%) !important;
+            }
+            /* Style expander content area */
+            .semantic-type-expander > div[data-testid="stExpanderDetails"] {
+                padding: 20px !important;
+                background: linear-gradient(135deg, #FFFFFF 0%, #FFFBEB 100%) !important;
+                border-radius: 0 0 10px 10px !important;
+            }
+            /* Make query table scrollable with better styling */
+            div[data-testid="stDataEditor"] {
+                border: 1px solid #FED7AA !important;
+                border-radius: 8px !important;
+                box-shadow: 0 2px 4px rgba(249, 115, 22, 0.08) !important;
+                overflow: hidden !important;
+            }
+            /* Ensure the data editor content is scrollable */
+            div[data-testid="stDataEditor"] > div {
+                max-height: 420px !important;
+                overflow-y: auto !important;
+                overflow-x: auto !important;
+            }
+            /* Style the scrollbar */
+            div[data-testid="stDataEditor"] > div::-webkit-scrollbar {
+                width: 8px;
+                height: 8px;
+            }
+            div[data-testid="stDataEditor"] > div::-webkit-scrollbar-track {
+                background: #FFF7ED;
+                border-radius: 4px;
+            }
+            div[data-testid="stDataEditor"] > div::-webkit-scrollbar-thumb {
+                background: #FDBA74;
+                border-radius: 4px;
+            }
+            div[data-testid="stDataEditor"] > div::-webkit-scrollbar-thumb:hover {
+                background: #F97316;
+            }
+        </style>
+        <script>
+            function styleSemanticTypeExpander() {
+                const expanders = document.querySelectorAll('div[data-testid="stExpander"]');
+                expanders.forEach(expander => {
+                    const button = expander.querySelector('button[aria-expanded]');
+                    if (button && button.textContent.includes('Edit Semantic Types')) {
+                        expander.classList.add('semantic-type-expander');
+                    }
+                });
+            }
+            // Run on load and after delays to catch dynamically added elements
+            styleSemanticTypeExpander();
+            setTimeout(styleSemanticTypeExpander, 100);
+            setTimeout(styleSemanticTypeExpander, 300);
+            setTimeout(styleSemanticTypeExpander, 500);
+            setTimeout(styleSemanticTypeExpander, 1000);
+            // Watch for DOM changes
+            const observer = new MutationObserver(styleSemanticTypeExpander);
+            observer.observe(document.body, { childList: true, subtree: true });
+        </script>
+    """, unsafe_allow_html=True)
     
     qdf: pd.DataFrame = st.session_state.query_df.copy()
     
@@ -66,7 +153,7 @@ def render() -> None:
                         st.session_state[semantic_type_state_key][col_idx] = new_semantic_type
                         semantic_types[semantic_type] = new_semantic_type
             
-            apply_semantic_types = st.button("Apply Semantic Type Changes", type="primary", use_container_width=True)
+            apply_semantic_types = st.button("✅ Apply Semantic Type Changes", type="primary", use_container_width=True)
             if apply_semantic_types:
                 # Rename columns if semantic types changed
                 rename_map = {old: new for old, new in semantic_types.items() if old != new and new.strip()}
@@ -123,14 +210,14 @@ def render() -> None:
         # Navigation and action buttons
         c_nav1, c_nav2, c_nav3, c_nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
         with c_nav1:
-            if st.button("Back to previous stage", use_container_width=True):
+            if st.button("⬅️ Back", use_container_width=True):
                 goto_stage(1)
         with c_nav2:
             add_row = st.button("➕ Add Row", use_container_width=True)
         with c_nav3:
-            reset_query = st.button("Reset query table", use_container_width=True)
+            reset_query = st.button("🔄 Reset query table", use_container_width=True)
         with c_nav4:
-            submit_query = st.button("Submit query table", type="primary", use_container_width=True)
+            submit_query = st.button("📤 Submit query table", type="primary", use_container_width=True)
         
         # Handle add row button
         if add_row:
@@ -150,5 +237,18 @@ def render() -> None:
         if submit_query:
             st.session_state.query_ready = True
             st.session_state.query_submitted = True
+            
+            # Show progress bar for 1 second
+            progress_bar = st.progress(0, text="Submitting query table...")
+            num_steps = 20  # 20 steps for smooth animation
+            duration = 1.0  # 1 second total
+            step_duration = duration / num_steps
+            
+            for i in range(1, num_steps + 1):
+                progress = i / num_steps
+                progress_bar.progress(progress, text="Submitting query table...")
+                time.sleep(step_duration)
+            
+            progress_bar.empty()
             goto_stage(3)
 

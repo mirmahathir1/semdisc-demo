@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from utils import bundled_query, render_brand_header, render_stage_stepper
 
@@ -13,7 +14,7 @@ import page_retrieved_paths
 def main() -> None:
     st.set_page_config(page_title="SemDisc", layout="wide")
     
-    # Reduce top padding
+    # Reduce top padding and define button colors
     st.markdown("""
         <style>
             .main .block-container {
@@ -24,8 +25,131 @@ def main() -> None:
                 padding-top: 0.5rem;
                 padding-bottom: 0.5rem;
             }
+            /* Primary buttons - keep default Streamlit blue (targeted by Streamlit's baseButton-primary) */
+            div[data-testid="baseButton-primary"] > button:not(:disabled),
+            div[data-testid="baseButton-primary"] > button:not(:disabled):hover {
+                background-color: rgb(19, 102, 255) !important;
+                color: white !important;
+                border-color: rgb(19, 102, 255) !important;
+            }
+            div[data-testid="baseButton-primary"] > button:not(:disabled):hover {
+                background-color: rgb(15, 82, 204) !important;
+                border-color: rgb(15, 82, 204) !important;
+            }
+            /* Secondary buttons - orange (default for non-primary buttons) */
+            div[data-testid="stButton"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled),
+            div[data-testid="baseButton-secondary"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled) {
+                background-color: #F97316 !important;
+                color: white !important;
+                border-color: #F97316 !important;
+            }
+            div[data-testid="stButton"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled):hover,
+            div[data-testid="baseButton-secondary"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled):hover {
+                background-color: #EA580C !important;
+                border-color: #EA580C !important;
+            }
+            /* Reset buttons - light orange */
+            .btn-reset > button:not(:disabled),
+            div[data-testid="stButton"].btn-reset > button:not(:disabled) {
+                background-color: #FDBA74 !important;
+                color: white !important;
+                border-color: #FDBA74 !important;
+            }
+            .btn-reset > button:not(:disabled):hover,
+            div[data-testid="stButton"].btn-reset > button:not(:disabled):hover {
+                background-color: #FB923C !important;
+                border-color: #FB923C !important;
+            }
+            /* Action buttons (Add, etc.) - light orange (same as download) */
+            .btn-action > button:not(:disabled),
+            div[data-testid="stButton"].btn-action > button:not(:disabled) {
+                background-color: #FDBA74 !important;
+                color: white !important;
+                border-color: #FDBA74 !important;
+            }
+            .btn-action > button:not(:disabled):hover,
+            div[data-testid="stButton"].btn-action > button:not(:disabled):hover {
+                background-color: #FB923C !important;
+                border-color: #FB923C !important;
+            }
+            /* Navigation buttons (Back) - gray */
+            .btn-nav > button:not(:disabled),
+            div[data-testid="stButton"].btn-nav > button:not(:disabled) {
+                background-color: #6B7280 !important;
+                color: white !important;
+                border-color: #6B7280 !important;
+            }
+            .btn-nav > button:not(:disabled):hover,
+            div[data-testid="stButton"].btn-nav > button:not(:disabled):hover {
+                background-color: #4B5563 !important;
+                border-color: #4B5563 !important;
+            }
+            /* Download buttons - light orange */
+            .btn-download > button:not(:disabled),
+            div[data-testid="stDownloadButton"].btn-download > button:not(:disabled),
+            div[data-testid="stButton"].btn-download > button:not(:disabled) {
+                background-color: #FDBA74 !important;
+                color: white !important;
+                border-color: #FDBA74 !important;
+            }
+            .btn-download > button:not(:disabled):hover,
+            div[data-testid="stDownloadButton"].btn-download > button:not(:disabled):hover,
+            div[data-testid="stButton"].btn-download > button:not(:disabled):hover {
+                background-color: #FB923C !important;
+                border-color: #FB923C !important;
+            }
         </style>
     """, unsafe_allow_html=True)
+    
+    # Inject JavaScript via components.html to classify buttons by text content
+    # This runs in an iframe but accesses the parent document
+    components.html("""
+        <script>
+            function addButtonClasses() {
+                const parent = window.parent.document;
+                
+                // Target all button containers in the parent document
+                const buttonContainers = parent.querySelectorAll('div[data-testid="stButton"], div[data-testid="baseButton-secondary"], div[data-testid="stDownloadButton"]');
+                
+                buttonContainers.forEach(wrapper => {
+                    const btn = wrapper.querySelector('button');
+                    if (!btn) return;
+                    
+                    const btnText = btn.textContent.trim();
+                    
+                    // Skip primary buttons
+                    if (wrapper.closest('div[data-testid="baseButton-primary"]')) {
+                        return;
+                    }
+                    
+                    // Remove existing classes
+                    wrapper.classList.remove('btn-reset', 'btn-action', 'btn-nav', 'btn-download');
+                    
+                    // Classify buttons by text content
+                    if (btnText.includes('Reset') || btnText.toLowerCase().includes('reset')) {
+                        wrapper.classList.add('btn-reset');
+                    } else if (btnText.includes('Add') || btnText.includes('➕')) {
+                        wrapper.classList.add('btn-action');
+                    } else if (btnText.includes('Back') || btnText.toLowerCase().includes('back')) {
+                        wrapper.classList.add('btn-nav');
+                    } else if (btnText.includes('Download') || btnText.toLowerCase().includes('download')) {
+                        wrapper.classList.add('btn-download');
+                    }
+                });
+            }
+            
+            // Run immediately and on intervals to catch dynamically added buttons
+            addButtonClasses();
+            setTimeout(addButtonClasses, 100);
+            setTimeout(addButtonClasses, 300);
+            setTimeout(addButtonClasses, 500);
+            setTimeout(addButtonClasses, 1000);
+            
+            // Watch for DOM changes in parent document
+            const observer = new MutationObserver(addButtonClasses);
+            observer.observe(window.parent.document.body, { childList: true, subtree: true });
+        </script>
+    """, height=0)
     
     render_brand_header()
 

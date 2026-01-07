@@ -113,7 +113,13 @@ def simple_paths_topk(
             continue
 
         for e in graph.get(node, []):
-            nxt = e.right
+            # Joins are non-directional: get the other node regardless of left/right
+            if e.left == node:
+                nxt = e.right
+            elif e.right == node:
+                nxt = e.left
+            else:
+                continue  # Edge doesn't connect to current node
             if nxt in path:
                 continue
             q.append((nxt, path + [nxt], score * max(e.score, 1e-9), edges + [e]))
@@ -129,6 +135,7 @@ def materialize_path(
 ) -> pd.DataFrame:
     df = tables[path_nodes[0]].copy()
     for edge, next_node in zip(path_edges, path_nodes[1:]):
+        # Joins are non-directional: merge with the next node regardless of edge direction
         right = tables[next_node]
         key = edge.key
         df = df.merge(right, how="left", on=key, suffixes=("", f"_{next_node}"))
@@ -138,6 +145,7 @@ def materialize_path(
 def to_dot(
     graph: Dict[str, List[EdgeInfo]],
     highlight_edges: Sequence[Tuple[str, str]] = (),
+    tables: Optional[Dict[str, pd.DataFrame]] = None,
 ) -> str:
     highlight = set()
     for a, b in highlight_edges:
@@ -162,7 +170,15 @@ def to_dot(
         is_hl = (u, v) in highlight or (v, u) in highlight
         color = "#d62728" if is_hl else "#666666"
         penwidth = "3.0" if is_hl else "1.2"
-        label = f"{e.key}\\n{e.score:.2f}"
+        
+        # Get the join key column name from each table
+        # Currently e.key is the common column name, but we show it for both tables
+        left_join_key = e.key
+        right_join_key = e.key
+        
+        # Show just the two join keys separated by comma
+        label = f"{left_join_key}, {right_join_key}"
+        
         lines.append(f'  "{u}" -- "{v}" [label="{label}", color="{color}", penwidth="{penwidth}"];')
 
     lines.append("}")
@@ -303,22 +319,32 @@ def drop_fully_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
 def format_path(path: Sequence[str], edges: Sequence[EdgeInfo]) -> str:
     parts = [path[0]]
     for e, nxt in zip(edges, path[1:]):
-        parts.append(f"--[{e.key}, {e.score:.2f}]--> {nxt}")
+        parts.append(f"--[{e.key}, {e.score:.2f}]-- {nxt}")
     return " ".join(parts)
 
 
-def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo]) -> str:
+def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optional[Dict[str, pd.DataFrame]] = None) -> str:
     lines = [
-        "digraph P {",
+        "graph P {",
         '  graph [rankdir="LR", bgcolor="white"];',
         '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica"];',
         '  edge [color="#d62728", fontname="Helvetica", penwidth="2.6"];',
     ]
     for n in nodes:
         lines.append(f'  "{n}";')
-    for e, nxt in zip(edges, nodes[1:]):
-        label = f"{e.key}"
-        lines.append(f'  "{e.left}" -> "{nxt}" [label="{label}"];')
+    for i, (e, nxt) in enumerate(zip(edges, nodes[1:])):
+        # Joins are non-directional: connect current node to next node
+        # Get the join key column name from each table
+        # Currently e.key is the common column name, but we show it for both tables
+        left_join_key = e.key
+        right_join_key = e.key
+        
+        # Show just the two join keys separated by comma
+        label = f"{left_join_key}, {right_join_key}"
+        
+        # Use undirected edge (--) instead of directed (->)
+        current_node = nodes[i]
+        lines.append(f'  "{current_node}" -- "{nxt}" [label="{label}"];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -390,18 +416,18 @@ def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
     border: 2px solid #9CA3AF; background: #ffffff;
     box-sizing: border-box;
   }
-  .sd-circle.done { background: #22C55E; border-color: #16A34A; }
+  .sd-circle.done { background: #F97316; border-color: #EA580C; }
   .sd-circle.current {
-    background: #22C55E; border-color: #16A34A;
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.28), 0 0 12px rgba(34, 197, 94, 0.55);
+    background: #F97316; border-color: #EA580C;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.28), 0 0 12px rgba(249, 115, 22, 0.55);
   }
-  .sd-circle.todo { background: #ffffff; border-color: #9CA3AF; }
+  .sd-circle.todo { background: #F5F3FF; border-color: #C4B5FD; }
   .sd-line {
     width: 3px; flex: 1; min-height: 22px;
-    background: #D1D5DB; border-radius: 999px;
+    background: #DDD6FE; border-radius: 999px;
     margin: 4px 0;
   }
-  .sd-line.done { background: #22C55E; }
+  .sd-line.done { background: #F97316; }
   .sd-label { font-size: 0.90rem; color: #111827; line-height: 1.1; }
   .sd-label.current { font-weight: 750; }
   .sd-label.todo { color: #4B5563; }

@@ -87,12 +87,12 @@ def render() -> None:
             st.info("Upload your data lake CSV files to enable preprocessing.")
 
         preprocess_clicked = st.button(
-            "Preprocess",
-            type="primary",
+            "⚙️ Preprocess",
             use_container_width=True,
             disabled=preprocess_disabled,
+            key="preprocess_button",
         )
-        reset_clicked = st.button("Reset processed data", use_container_width=True)
+        reset_clicked = st.button("🔄 Reset processed data", use_container_width=True, key="reset_processed_data_button")
 
     if reset_clicked:
         st.session_state.processed_ready = False
@@ -150,6 +150,6 @@ def render() -> None:
         st.info("Click **Preprocess** to load and prepare the data lake.")
 
     if st.session_state.processed_ready:
-        if st.button("Proceed to next stage", type="primary", use_container_width=True):
+        if st.button("➡️ Proceed to next stage", type="primary", use_container_width=True):
             goto_stage(1)
 
