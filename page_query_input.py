@@ -207,6 +207,19 @@ def render() -> None:
             key="ret_top_k_slider",
         )
         
+        # Number of paths to display slider (for comparison view)
+        if "num_display_paths" not in st.session_state:
+            st.session_state.num_display_paths = 20
+        st.session_state.num_display_paths = st.slider(
+            "Number of paths to display",
+            min_value=10,
+            max_value=30,
+            value=int(st.session_state.num_display_paths),
+            step=2,
+            key="num_display_paths_slider",
+            help="Control how many join paths to show in the comparison view (10-30)",
+        )
+        
         # Navigation and action buttons
         c_nav1, c_nav2, c_nav3, c_nav4 = st.columns([0.25, 0.25, 0.25, 0.25])
         with c_nav1:

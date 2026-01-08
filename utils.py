@@ -717,6 +717,72 @@ def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optiona
     return "\n".join(lines)
 
 
+def path_to_dot_highlighted(
+    nodes: Sequence[str],
+    edges: Sequence[EdgeInfo],
+    tables: Optional[Dict[str, pd.DataFrame]] = None,
+    highlight_blue: bool = False,
+    highlight_green_nodes: Optional[Set[str]] = None,
+) -> str:
+    """Generate DOT source for a path with optional highlighting.
+    
+    Args:
+        nodes: List of table names in the path
+        edges: List of edges connecting the nodes
+        tables: Optional dict of table DataFrames
+        highlight_blue: If True, highlight the entire path in blue (row match)
+        highlight_green_nodes: Set of node names to highlight in green (column match)
+    
+    Returns:
+        DOT source string
+    """
+    highlight_green_nodes = highlight_green_nodes or set()
+    
+    # Base colors
+    default_fill = "#f7f7f7"
+    default_border = "#444444"
+    default_edge = "#d62728"
+    
+    # Highlight colors
+    blue_fill = "#DBEAFE"  # Light blue background
+    blue_border = "#2563EB"  # Blue border
+    blue_edge = "#2563EB"  # Blue edges
+    green_fill = "#D1FAE5"  # Light green background
+    green_border = "#059669"  # Green border
+    
+    edge_color = blue_edge if highlight_blue else default_edge
+    
+    lines = [
+        "graph P {",
+        '  graph [rankdir="LR", bgcolor="white"];',
+        f'  edge [color="{edge_color}", fontname="Helvetica", penwidth="2.6"];',
+    ]
+    
+    for n in nodes:
+        # Determine node styling
+        if n in highlight_green_nodes:
+            fill = green_fill
+            border = green_border
+        elif highlight_blue:
+            fill = blue_fill
+            border = blue_border
+        else:
+            fill = default_fill
+            border = default_border
+        
+        lines.append(f'  "{n}" [shape="box", style="rounded,filled", fillcolor="{fill}", color="{border}", fontname="Helvetica"];')
+    
+    for i, (e, nxt) in enumerate(zip(edges, nodes[1:])):
+        left_join_key = e.key
+        right_join_key = e.key
+        label = f"{left_join_key}, {right_join_key}"
+        current_node = nodes[i]
+        lines.append(f'  "{current_node}" -- "{nxt}" [label="{label}"];')
+    
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def token_for_bytes(b: bytes) -> str:
     return hashlib.md5(b).hexdigest()
 
