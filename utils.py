@@ -22,6 +22,86 @@ class EdgeInfo:
     score: float
 
 
+# Hardcoded semantic type annotations (demo-only).
+# Maps (table_name, column_name) -> semantic type string.
+SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
+    # customers
+    ("customers", "customer_id"): "Customer Identifier",
+    ("customers", "name"): "Customer Full Name",
+    ("customers", "country"): "Customer Country",
+    ("customers", "segment"): "Customer Segment",
+    ("customers", "signup_date"): "Customer Signup Date",
+    # orders
+    ("orders", "order_id"): "Order Identifier",
+    ("orders", "customer_id"): "Customer Identifier",
+    ("orders", "order_date"): "Order Date",
+    ("orders", "order_status"): "Order Status",
+    ("orders", "currency"): "Currency Code",
+    # order_items
+    ("order_items", "order_id"): "Order Identifier",
+    ("order_items", "product_id"): "Product Identifier",
+    ("order_items", "qty"): "Quantity Ordered",
+    ("order_items", "unit_price"): "Unit Price",
+    # products
+    ("products", "product_id"): "Product Identifier",
+    ("products", "product"): "Product Name",
+    ("products", "category_id"): "Product Category Identifier",
+    ("products", "supplier_id"): "Supplier Identifier",
+    ("products", "list_price"): "Product List Price",
+    # categories
+    ("categories", "category_id"): "Product Category Identifier",
+    ("categories", "category"): "Product Category Name",
+    ("categories", "department_id"): "Department Identifier",
+    # departments
+    ("departments", "department_id"): "Department Identifier",
+    ("departments", "department"): "Department Name",
+    # suppliers
+    ("suppliers", "supplier_id"): "Supplier Identifier",
+    ("suppliers", "supplier"): "Supplier Name",
+    ("suppliers", "supplier_country"): "Supplier Country",
+    # warehouses
+    ("warehouses", "warehouse_id"): "Warehouse Identifier",
+    ("warehouses", "warehouse_city"): "Warehouse City",
+    ("warehouses", "warehouse_country"): "Warehouse Country",
+    # inventory
+    ("inventory", "warehouse_id"): "Warehouse Identifier",
+    ("inventory", "product_id"): "Product Identifier",
+    ("inventory", "on_hand_qty"): "On-hand Inventory Quantity",
+    ("inventory", "reorder_point"): "Inventory Reorder Point",
+    # shipments
+    ("shipments", "shipment_id"): "Shipment Identifier",
+    ("shipments", "order_id"): "Order Identifier",
+    ("shipments", "warehouse_id"): "Warehouse Identifier",
+    ("shipments", "carrier_id"): "Carrier Identifier",
+    ("shipments", "ship_date"): "Shipment Date",
+    # carriers
+    ("carriers", "carrier_id"): "Carrier Identifier",
+    ("carriers", "carrier"): "Carrier Name",
+    # payments
+    ("payments", "payment_id"): "Payment Identifier",
+    ("payments", "order_id"): "Order Identifier",
+    ("payments", "payment_method_id"): "Payment Method Identifier",
+    ("payments", "amount"): "Payment Amount",
+    ("payments", "payment_date"): "Payment Date",
+    # payment_methods
+    ("payment_methods", "payment_method_id"): "Payment Method Identifier",
+    ("payment_methods", "payment_method"): "Payment Method Name",
+    # returns
+    ("returns", "return_id"): "Return Identifier",
+    ("returns", "order_id"): "Order Identifier",
+    ("returns", "product_id"): "Product Identifier",
+    ("returns", "return_date"): "Return Date",
+    ("returns", "return_reason"): "Return Reason",
+    ("returns", "return_amount"): "Return Amount",
+    # reviews
+    ("reviews", "review_id"): "Review Identifier",
+    ("reviews", "customer_id"): "Customer Identifier",
+    ("reviews", "product_id"): "Product Identifier",
+    ("reviews", "rating"): "Product Rating",
+    ("reviews", "review_date"): "Review Date",
+}
+
+
 def normalize_cell(x) -> str:
     if pd.isna(x):
         return ""
@@ -187,55 +267,230 @@ def to_dot(
 
 @st.cache_data(show_spinner=False)
 def bundled_datalake() -> Dict[str, pd.DataFrame]:
+    # Expanded demo datalake (e-commerce domain). The join graph is inferred purely by
+    # (1) shared column names and (2) overlapping values (Jaccard).
     customers = pd.DataFrame(
         [
-            {"customer_id": "C001", "name": "A. Rivera", "country": "US"},
-            {"customer_id": "C002", "name": "S. Tan", "country": "SG"},
-            {"customer_id": "C003", "name": "M. Kowalski", "country": "PL"},
+            {"customer_id": "C001", "name": "A. Rivera", "country": "US", "segment": "Consumer", "signup_date": "2025-01-08"},
+            {"customer_id": "C002", "name": "S. Tan", "country": "SG", "segment": "SMB", "signup_date": "2025-02-14"},
+            {"customer_id": "C003", "name": "M. Kowalski", "country": "PL", "segment": "Consumer", "signup_date": "2025-03-03"},
+            {"customer_id": "C004", "name": "J. Müller", "country": "DE", "segment": "Enterprise", "signup_date": "2025-03-18"},
+            {"customer_id": "C005", "name": "R. Singh", "country": "IN", "segment": "SMB", "signup_date": "2025-04-25"},
+            {"customer_id": "C006", "name": "L. Silva", "country": "BR", "segment": "Consumer", "signup_date": "2025-05-09"},
+            {"customer_id": "C007", "name": "N. Johnson", "country": "US", "segment": "Enterprise", "signup_date": "2025-06-21"},
+            {"customer_id": "C008", "name": "Y. Chen", "country": "CN", "segment": "Consumer", "signup_date": "2025-07-02"},
         ]
     )
+
     orders = pd.DataFrame(
         [
-            {"order_id": "O100", "customer_id": "C001", "order_date": "2025-12-10"},
-            {"order_id": "O101", "customer_id": "C002", "order_date": "2025-12-11"},
-            {"order_id": "O102", "customer_id": "C001", "order_date": "2025-12-20"},
+            {"order_id": "O100", "customer_id": "C001", "order_date": "2025-12-10", "order_status": "Shipped", "currency": "USD"},
+            {"order_id": "O101", "customer_id": "C002", "order_date": "2025-12-11", "order_status": "Delivered", "currency": "SGD"},
+            {"order_id": "O102", "customer_id": "C001", "order_date": "2025-12-20", "order_status": "Delivered", "currency": "USD"},
+            {"order_id": "O103", "customer_id": "C003", "order_date": "2025-12-22", "order_status": "Shipped", "currency": "EUR"},
+            {"order_id": "O104", "customer_id": "C004", "order_date": "2025-12-23", "order_status": "Processing", "currency": "EUR"},
+            {"order_id": "O105", "customer_id": "C005", "order_date": "2025-12-24", "order_status": "Cancelled", "currency": "INR"},
+            {"order_id": "O106", "customer_id": "C006", "order_date": "2025-12-26", "order_status": "Delivered", "currency": "BRL"},
+            {"order_id": "O107", "customer_id": "C002", "order_date": "2025-12-27", "order_status": "Delivered", "currency": "SGD"},
+            {"order_id": "O108", "customer_id": "C007", "order_date": "2025-12-28", "order_status": "Shipped", "currency": "USD"},
+            {"order_id": "O109", "customer_id": "C008", "order_date": "2025-12-29", "order_status": "Processing", "currency": "CNY"},
+            {"order_id": "O110", "customer_id": "C003", "order_date": "2025-12-30", "order_status": "Delivered", "currency": "EUR"},
+            {"order_id": "O111", "customer_id": "C001", "order_date": "2025-12-31", "order_status": "Delivered", "currency": "USD"},
         ]
     )
-    order_items = pd.DataFrame(
-        [
-            {"order_id": "O100", "product_id": "P10", "qty": 1},
-            {"order_id": "O100", "product_id": "P20", "qty": 2},
-            {"order_id": "O101", "product_id": "P30", "qty": 1},
-            {"order_id": "O102", "product_id": "P10", "qty": 1},
-        ]
-    )
+
     products = pd.DataFrame(
         [
-            {"product_id": "P10", "product": "Keyboard", "category_id": "CAT1"},
-            {"product_id": "P20", "product": "Mouse", "category_id": "CAT1"},
-            {"product_id": "P30", "product": "Monitor", "category_id": "CAT2"},
+            {"product_id": "P10", "product": "Keyboard", "category_id": "CAT1", "supplier_id": "SUP1", "list_price": 69.0},
+            {"product_id": "P11", "product": "Mouse", "category_id": "CAT1", "supplier_id": "SUP2", "list_price": 39.0},
+            {"product_id": "P12", "product": "Monitor", "category_id": "CAT2", "supplier_id": "SUP3", "list_price": 199.0},
+            {"product_id": "P13", "product": "USB-C Cable", "category_id": "CAT1", "supplier_id": "SUP1", "list_price": 14.0},
+            {"product_id": "P14", "product": "Laptop Stand", "category_id": "CAT3", "supplier_id": "SUP4", "list_price": 49.0},
+            {"product_id": "P15", "product": "Webcam", "category_id": "CAT4", "supplier_id": "SUP3", "list_price": 89.0},
+            {"product_id": "P16", "product": "Docking Station", "category_id": "CAT3", "supplier_id": "SUP5", "list_price": 149.0},
+            {"product_id": "P17", "product": "Desk Lamp", "category_id": "CAT4", "supplier_id": "SUP4", "list_price": 29.0},
+            {"product_id": "P18", "product": "External SSD", "category_id": "CAT2", "supplier_id": "SUP5", "list_price": 129.0},
+            {"product_id": "P19", "product": "Headset", "category_id": "CAT1", "supplier_id": "SUP2", "list_price": 59.0},
         ]
     )
+
+    order_items = pd.DataFrame(
+        [
+            {"order_id": "O100", "product_id": "P10", "qty": 1, "unit_price": 65.0},
+            {"order_id": "O100", "product_id": "P13", "qty": 2, "unit_price": 12.0},
+            {"order_id": "O101", "product_id": "P12", "qty": 1, "unit_price": 189.0},
+            {"order_id": "O102", "product_id": "P11", "qty": 1, "unit_price": 35.0},
+            {"order_id": "O102", "product_id": "P19", "qty": 1, "unit_price": 55.0},
+            {"order_id": "O103", "product_id": "P14", "qty": 1, "unit_price": 45.0},
+            {"order_id": "O103", "product_id": "P15", "qty": 1, "unit_price": 82.0},
+            {"order_id": "O104", "product_id": "P16", "qty": 2, "unit_price": 139.0},
+            {"order_id": "O104", "product_id": "P10", "qty": 1, "unit_price": 67.0},
+            {"order_id": "O105", "product_id": "P17", "qty": 1, "unit_price": 26.0},
+            {"order_id": "O106", "product_id": "P18", "qty": 1, "unit_price": 119.0},
+            {"order_id": "O106", "product_id": "P11", "qty": 1, "unit_price": 38.0},
+            {"order_id": "O107", "product_id": "P13", "qty": 3, "unit_price": 13.0},
+            {"order_id": "O107", "product_id": "P12", "qty": 1, "unit_price": 195.0},
+            {"order_id": "O108", "product_id": "P10", "qty": 1, "unit_price": 68.0},
+            {"order_id": "O108", "product_id": "P14", "qty": 1, "unit_price": 47.0},
+            {"order_id": "O109", "product_id": "P15", "qty": 1, "unit_price": 86.0},
+            {"order_id": "O110", "product_id": "P18", "qty": 2, "unit_price": 125.0},
+            {"order_id": "O111", "product_id": "P19", "qty": 1, "unit_price": 57.0},
+            {"order_id": "O111", "product_id": "P11", "qty": 2, "unit_price": 36.0},
+        ]
+    )
+
     categories = pd.DataFrame(
         [
-            {"category_id": "CAT1", "category": "Accessories"},
-            {"category_id": "CAT2", "category": "Displays"},
+            {"category_id": "CAT1", "category": "Accessories", "department_id": "DEP1"},
+            {"category_id": "CAT2", "category": "Displays & Storage", "department_id": "DEP1"},
+            {"category_id": "CAT3", "category": "Workspace", "department_id": "DEP2"},
+            {"category_id": "CAT4", "category": "Imaging", "department_id": "DEP2"},
         ]
     )
+
+    departments = pd.DataFrame(
+        [
+            {"department_id": "DEP1", "department": "Computing"},
+            {"department_id": "DEP2", "department": "Office"},
+        ]
+    )
+
+    suppliers = pd.DataFrame(
+        [
+            {"supplier_id": "SUP1", "supplier": "Northwind Components", "supplier_country": "US"},
+            {"supplier_id": "SUP2", "supplier": "Lion City Peripherals", "supplier_country": "SG"},
+            {"supplier_id": "SUP3", "supplier": "Vistula Electronics", "supplier_country": "PL"},
+            {"supplier_id": "SUP4", "supplier": "Rhein Workspace", "supplier_country": "DE"},
+            {"supplier_id": "SUP5", "supplier": "Pearl River Tech", "supplier_country": "CN"},
+        ]
+    )
+
+    warehouses = pd.DataFrame(
+        [
+            {"warehouse_id": "W1", "warehouse_city": "Newark", "warehouse_country": "US"},
+            {"warehouse_id": "W2", "warehouse_city": "Singapore", "warehouse_country": "SG"},
+            {"warehouse_id": "W3", "warehouse_city": "Frankfurt", "warehouse_country": "DE"},
+        ]
+    )
+
+    inventory_rows = []
+    for wid in ["W1", "W2", "W3"]:
+        for pid, base in [
+            ("P10", 22),
+            ("P11", 35),
+            ("P12", 14),
+            ("P13", 80),
+            ("P14", 18),
+            ("P15", 20),
+            ("P16", 12),
+            ("P17", 40),
+            ("P18", 16),
+            ("P19", 28),
+        ]:
+            # Slight deterministic variation per warehouse to keep it "realistic"
+            bump = 0 if wid == "W1" else (3 if wid == "W2" else -2)
+            inventory_rows.append(
+                {
+                    "warehouse_id": wid,
+                    "product_id": pid,
+                    "on_hand_qty": max(0, base + bump),
+                    "reorder_point": 10,
+                }
+            )
+    inventory = pd.DataFrame(inventory_rows)
+
+    carriers = pd.DataFrame(
+        [
+            {"carrier_id": "CR1", "carrier": "DHL"},
+            {"carrier_id": "CR2", "carrier": "UPS"},
+            {"carrier_id": "CR3", "carrier": "FedEx"},
+        ]
+    )
+
     shipments = pd.DataFrame(
         [
-            {"order_id": "O100", "shipment_id": "S900", "carrier": "DHL"},
-            {"order_id": "O101", "shipment_id": "S901", "carrier": "UPS"},
-            {"order_id": "O102", "shipment_id": "S902", "carrier": "FedEx"},
+            {"shipment_id": "S900", "order_id": "O100", "warehouse_id": "W1", "carrier_id": "CR1", "ship_date": "2025-12-11"},
+            {"shipment_id": "S901", "order_id": "O101", "warehouse_id": "W2", "carrier_id": "CR2", "ship_date": "2025-12-12"},
+            {"shipment_id": "S902", "order_id": "O102", "warehouse_id": "W1", "carrier_id": "CR3", "ship_date": "2025-12-21"},
+            {"shipment_id": "S903", "order_id": "O103", "warehouse_id": "W3", "carrier_id": "CR1", "ship_date": "2025-12-23"},
+            {"shipment_id": "S904", "order_id": "O104", "warehouse_id": "W3", "carrier_id": "CR2", "ship_date": "2025-12-24"},
+            {"shipment_id": "S905", "order_id": "O105", "warehouse_id": "W2", "carrier_id": "CR3", "ship_date": "2025-12-24"},
+            {"shipment_id": "S906", "order_id": "O106", "warehouse_id": "W1", "carrier_id": "CR2", "ship_date": "2025-12-27"},
+            {"shipment_id": "S907", "order_id": "O107", "warehouse_id": "W2", "carrier_id": "CR1", "ship_date": "2025-12-28"},
+            {"shipment_id": "S908", "order_id": "O108", "warehouse_id": "W1", "carrier_id": "CR3", "ship_date": "2025-12-29"},
+            {"shipment_id": "S909", "order_id": "O109", "warehouse_id": "W2", "carrier_id": "CR2", "ship_date": "2025-12-30"},
+            {"shipment_id": "S910", "order_id": "O110", "warehouse_id": "W3", "carrier_id": "CR1", "ship_date": "2025-12-31"},
+            {"shipment_id": "S911", "order_id": "O111", "warehouse_id": "W1", "carrier_id": "CR2", "ship_date": "2026-01-02"},
         ]
     )
+
+    payment_methods = pd.DataFrame(
+        [
+            {"payment_method_id": "PM1", "payment_method": "Credit Card"},
+            {"payment_method_id": "PM2", "payment_method": "PayPal"},
+            {"payment_method_id": "PM3", "payment_method": "Bank Transfer"},
+        ]
+    )
+
+    payments = pd.DataFrame(
+        [
+            {"payment_id": "PAY900", "order_id": "O100", "payment_method_id": "PM1", "amount": 89.0, "payment_date": "2025-12-10"},
+            {"payment_id": "PAY901", "order_id": "O101", "payment_method_id": "PM2", "amount": 189.0, "payment_date": "2025-12-11"},
+            {"payment_id": "PAY902", "order_id": "O102", "payment_method_id": "PM1", "amount": 90.0, "payment_date": "2025-12-20"},
+            {"payment_id": "PAY903", "order_id": "O103", "payment_method_id": "PM3", "amount": 127.0, "payment_date": "2025-12-22"},
+            {"payment_id": "PAY904", "order_id": "O104", "payment_method_id": "PM1", "amount": 345.0, "payment_date": "2025-12-23"},
+            {"payment_id": "PAY905", "order_id": "O105", "payment_method_id": "PM2", "amount": 26.0, "payment_date": "2025-12-24"},
+            {"payment_id": "PAY906", "order_id": "O106", "payment_method_id": "PM1", "amount": 157.0, "payment_date": "2025-12-26"},
+            {"payment_id": "PAY907", "order_id": "O107", "payment_method_id": "PM2", "amount": 234.0, "payment_date": "2025-12-27"},
+            {"payment_id": "PAY908", "order_id": "O108", "payment_method_id": "PM3", "amount": 115.0, "payment_date": "2025-12-28"},
+            {"payment_id": "PAY909", "order_id": "O109", "payment_method_id": "PM1", "amount": 86.0, "payment_date": "2025-12-29"},
+            {"payment_id": "PAY910", "order_id": "O110", "payment_method_id": "PM2", "amount": 250.0, "payment_date": "2025-12-30"},
+            {"payment_id": "PAY911", "order_id": "O111", "payment_method_id": "PM1", "amount": 129.0, "payment_date": "2025-12-31"},
+        ]
+    )
+
+    returns = pd.DataFrame(
+        [
+            {"return_id": "R100", "order_id": "O102", "product_id": "P19", "return_date": "2026-01-03", "return_reason": "Defective", "return_amount": 55.0},
+            {"return_id": "R101", "order_id": "O103", "product_id": "P15", "return_date": "2026-01-05", "return_reason": "Changed mind", "return_amount": 82.0},
+            {"return_id": "R102", "order_id": "O104", "product_id": "P16", "return_date": "2026-01-06", "return_reason": "Not compatible", "return_amount": 139.0},
+            {"return_id": "R103", "order_id": "O106", "product_id": "P11", "return_date": "2026-01-07", "return_reason": "Late delivery", "return_amount": 38.0},
+            {"return_id": "R104", "order_id": "O107", "product_id": "P12", "return_date": "2026-01-08", "return_reason": "Damaged box", "return_amount": 195.0},
+            {"return_id": "R105", "order_id": "O111", "product_id": "P11", "return_date": "2026-01-09", "return_reason": "Wrong item", "return_amount": 36.0},
+        ]
+    )
+
+    reviews = pd.DataFrame(
+        [
+            {"review_id": "RV001", "customer_id": "C001", "product_id": "P10", "rating": 5, "review_date": "2025-12-18"},
+            {"review_id": "RV002", "customer_id": "C002", "product_id": "P12", "rating": 4, "review_date": "2025-12-20"},
+            {"review_id": "RV003", "customer_id": "C003", "product_id": "P14", "rating": 5, "review_date": "2025-12-26"},
+            {"review_id": "RV004", "customer_id": "C004", "product_id": "P16", "rating": 4, "review_date": "2025-12-28"},
+            {"review_id": "RV005", "customer_id": "C005", "product_id": "P17", "rating": 3, "review_date": "2025-12-29"},
+            {"review_id": "RV006", "customer_id": "C006", "product_id": "P18", "rating": 5, "review_date": "2025-12-30"},
+            {"review_id": "RV007", "customer_id": "C002", "product_id": "P13", "rating": 4, "review_date": "2025-12-31"},
+            {"review_id": "RV008", "customer_id": "C007", "product_id": "P19", "rating": 4, "review_date": "2026-01-01"},
+            {"review_id": "RV009", "customer_id": "C008", "product_id": "P15", "rating": 5, "review_date": "2026-01-02"},
+            {"review_id": "RV010", "customer_id": "C001", "product_id": "P11", "rating": 4, "review_date": "2026-01-03"},
+        ]
+    )
+
     return {
         "customers": customers,
         "orders": orders,
         "order_items": order_items,
         "products": products,
         "categories": categories,
+        "departments": departments,
+        "suppliers": suppliers,
+        "warehouses": warehouses,
+        "inventory": inventory,
         "shipments": shipments,
+        "carriers": carriers,
+        "payments": payments,
+        "payment_methods": payment_methods,
+        "returns": returns,
+        "reviews": reviews,
     }
 
 
@@ -245,7 +500,9 @@ def bundled_query() -> pd.DataFrame:
         [
             {"order_id": "O100", "customer_id": "C001", "country": "US"},
             {"order_id": "O101", "customer_id": "C002", "country": "SG"},
-            {"order_id": "O102", "customer_id": "C001", "country": "US"},
+            {"order_id": "O103", "customer_id": "C003", "country": "PL"},
+            {"order_id": "O104", "customer_id": "C004", "country": "DE"},
+            {"order_id": "O108", "customer_id": "C007", "country": "US"},
         ]
     )
 
