@@ -84,18 +84,44 @@
         font-size: 0.86rem;
         padding: 8px 6px;
       }
+      .xhdr {
+        text-align: center;
+        font-weight: 800;
+        font-size: 0.84rem;
+        color: #374151;
+        padding: 6px 6px;
+      }
       .yhdr {
         position: sticky;
         left: 0;
-        z-index: 1;
+        z-index: 3;
         background: #ffffff;
         font-weight: 700;
         color: #475569;
         font-size: 0.8rem;
-        padding: 0 8px;
+        padding: 0 2px;
         text-align: left;
         white-space: nowrap;
-        min-width: 138px;
+        /* Make the row-header column narrow and stable. */
+        width: 52px;
+        min-width: 52px;
+        max-width: 52px;
+      }
+      .yhdr.yhdr-vert {
+        text-align: center;
+        padding: 0;
+        vertical-align: middle;
+      }
+      .yhdr.yhdr-vert > span {
+        display: inline-block;
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        transform: rotate(180deg);
+        font-weight: 800;
+        font-size: 0.78rem;
+        color: #374151;
+        padding: 6px 0;
+        letter-spacing: 0.02em;
       }
       .cell {
         display: block;
@@ -243,6 +269,16 @@
         const tmax = Math.max(...tupleCounts);
 
         const fmt = (n) => Number(n).toLocaleString();
+        const fmtShort = (n) => {
+          const x = Number(n);
+          if (!Number.isFinite(x)) return String(n);
+          const abs = Math.abs(x);
+          const suffix = (v, s) => (Number.isInteger(v) ? String(v) : v.toFixed(1)) + s;
+          if (abs >= 1e9) return suffix(x / 1e9, "B");
+          if (abs >= 1e6) return suffix(x / 1e6, "M");
+          if (abs >= 1e3) return suffix(x / 1e3, "k");
+          return String(Math.trunc(x));
+        };
         const esc = (s) =>
           String(s)
             .replace(/&/g, "&amp;")
@@ -254,22 +290,26 @@
         html += '<div class="wrap">';
         html += '<div class="head">';
         html += `<div><div class="title">${esc(title)}</div>`;
-        html +=
-          '<div class="sub">X: nodes in path • Y: materialized tuple bins • click a cell to select a path</div></div>';
+        html += "</div>";
         html += `<div class="legend"><span>${fmt(cmin)} → ${fmt(cmax)} paths</span><span class="swatch"></span></div>`;
         html += "</div>";
         html += `<div class="scroller" style="max-height:${heightPx}px">`;
         html += "<table>";
-        html += "<thead><tr>";
-        html += '<th class="yhdr">Tuple count bin</th>';
+        html += "<thead>";
+        html += "<tr>";
+        html += '<th class="yhdr yhdr-vert" rowspan="2"><span>Tuple<br>Count<br>Bins</span></th>';
+        html += `<th class="xhdr" colspan="${nodeCounts.length}">Node Count</th>`;
+        html += "</tr>";
+        html += "<tr>";
         for (const n of nodeCounts) html += `<th>${n}</th>`;
-        html += "</tr></thead>";
+        html += "</tr>";
+        html += "</thead>";
         html += "<tbody>";
  
         for (let rowIdx = 0; rowIdx < binsDesc.length; rowIdx++) {
           const [lo, hi] = binsDesc[rowIdx];
           html += "<tr>";
-          html += `<td class="yhdr">${fmt(lo)}–${fmt(hi)}</td>`;
+          html += `<td class="yhdr">${fmtShort(lo)}–${fmtShort(hi)}</td>`;
           for (const n of nodeCounts) {
             const key = rowIdx + "|" + n;
             const agg = byCell.get(key);
@@ -332,9 +372,14 @@
           });
         });
  
-        // Approximate frame height: header (~70px) + scroller height (capped) + borders.
-        const headerH = 72;
-        const frameH = Math.min(heightPx + headerH + 10, 900);
+        // Set frame height to actual rendered content height (avoid large blank space
+        // when `heightPx` is larger than the table needs).
+        const wrapEl = root.querySelector(".wrap");
+        const measured =
+          wrapEl && typeof wrapEl.getBoundingClientRect === "function"
+            ? Math.ceil(wrapEl.getBoundingClientRect().height)
+            : 200;
+        const frameH = Math.min(Math.max(60, measured + 2), 900);
         sendMessage("streamlit:setFrameHeight", { height: frameH });
       }
  

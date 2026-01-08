@@ -701,11 +701,14 @@ def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optiona
     lines = [
         "graph P {",
         # Tighter layout: reduce spacing between ranks/nodes for shorter edges.
-        '  graph [rankdir="LR", bgcolor="white", ranksep="0.14", nodesep="0.10"];',
+        # Half the edge lengths by halving rank/node separation.
+        '  graph [rankdir="LR", bgcolor="white", ranksep="0.07", nodesep="0.05"];',
         # More compact nodes so long paths don't waste vertical space.
-        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];',
+        # Half the node height (min) + shrink padding/font a bit to match.
+        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="6", margin="0.02,0.010", height="0.06", width="0.22"];',
         # Smaller edge label font (about half default) for compact rendering.
-        '  edge [color="#d62728", fontname="Helvetica", fontsize="7", penwidth="1.4"];',
+        # Half the edge-label font size.
+        '  edge [color="#d62728", fontname="Helvetica", fontsize="4", penwidth="1.4"];',
     ]
     for n in nodes:
         lines.append(f'  "{n}";')
@@ -764,9 +767,11 @@ def path_to_dot_highlighted(
     lines = [
         "graph P {",
         # Tighter layout: reduce spacing between ranks/nodes for shorter edges.
-        '  graph [rankdir="LR", bgcolor="white", ranksep="0.14", nodesep="0.10"];',
+        # Half the edge lengths by halving rank/node separation.
+        '  graph [rankdir="LR", bgcolor="white", ranksep="0.07", nodesep="0.05"];',
         # Smaller edge label font (about half default) for compact rendering.
-        f'  edge [color="{edge_color}", fontname="Helvetica", fontsize="7", penwidth="1.4"];',
+        # Half the edge-label font size.
+        f'  edge [color="{edge_color}", fontname="Helvetica", fontsize="4", penwidth="1.4"];',
     ]
     
     for n in nodes:
@@ -783,7 +788,7 @@ def path_to_dot_highlighted(
         
         lines.append(
             f'  "{n}" [shape="box", style="rounded,filled", fillcolor="{fill}", color="{border}", '
-            f'fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];'
+            f'fontname="Helvetica", fontsize="6", margin="0.02,0.010", height="0.06", width="0.22"];'
         )
     
     for i, (e, nxt) in enumerate(zip(edges, nodes[1:])):
