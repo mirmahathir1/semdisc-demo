@@ -15,6 +15,7 @@ from utils import (
     goto_stage,
     materialize_path,
     path_to_dot,
+    render_graphviz_fixed_height,
     simple_paths_topk,
     to_dot,
     SEMANTIC_TYPES,
@@ -226,7 +227,6 @@ def render() -> None:
                         by_nodes[key] = (nodes, score, edges)
             paths = sorted(by_nodes.values(), key=lambda x: x[1], reverse=True)
 
-        st.subheader("Join paths")
         if not graph:
             st.warning("No join edges found with the current settings.")
             return
@@ -346,8 +346,9 @@ def render() -> None:
                                 st.caption(
                                     f"Nodes: {cmeta.node_count} • Tuples: {cmeta.tuple_count:,}"
                                 )
-                            st.graphviz_chart(
-                                path_to_dot(nodes, edges, tables=tables), use_container_width=True
+                            render_graphviz_fixed_height(
+                                path_to_dot(nodes, edges, tables=tables),
+                                height_px=52,
                             )
 
             st.divider()
@@ -619,6 +620,19 @@ def render() -> None:
     border: 1px solid #C4B5FD;
     color: #5B21B6;
     font-weight: 600;
+  }
+
+  /* Remove vertical gaps between successive join-path iframes in list view. */
+  div[data-testid="stCustomComponentV1"],
+  div[data-testid="stCustomComponentV1"] > div,
+  div[data-testid="stCustomComponentV1"] iframe {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  div.element-container,
+  div[data-testid="stVerticalBlock"] > div.element-container {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
   }
 </style>
 <script>
@@ -917,7 +931,6 @@ def render() -> None:
                     continue
                 rank = idx + 1
                 hops = len(nodes) - 1
-                path_txt = " -- ".join(nodes)
                 
                 # Materialize path to get metadata
                 try:
@@ -942,43 +955,54 @@ def render() -> None:
                 dot_source = path_to_dot(nodes, edges, tables=tables)
                 dot_json = json.dumps(dot_source)
                 
-                # Stats HTML - display values below labels
-                if num_rows > 0 or num_cols > 0:
-                    stats_html = f'''
-                    <div class="sd-unified-stats">
-                        <div class="sd-stat-item">
-                            <div class="sd-stat-label">Number of Rows:</div>
-                            <div class="sd-stat-value">{num_rows:,}</div>
-                        </div>
-                        <div class="sd-stat-item">
-                            <div class="sd-stat-label">Number of Columns:</div>
-                            <div class="sd-stat-value">{num_cols}</div>
-                        </div>
-                        <div class="sd-stat-item">
-                            <div class="sd-stat-label">Hops:</div>
-                            <div class="sd-stat-value">{hops}</div>
-                        </div>
+                # Meta column stats (always show, stacked vertically)
+                stats_html = f'''
+                <div class="sd-meta-stack">
+                    <div class="sd-meta-chip sd-meta-chip-path">
+                        <div class="sd-meta-k">Path</div>
+                        <div class="sd-meta-v">#{rank}</div>
                     </div>
-                    '''
-                else:
-                    stats_html = f'''
-                    <div class="sd-unified-stats">
-                        <div class="sd-stat-item">
-                            <div class="sd-stat-label">Hops:</div>
-                            <div class="sd-stat-value">{hops}</div>
-                        </div>
+                    <div class="sd-meta-chip sd-meta-chip-inline">
+                        <div class="sd-meta-k">Rows:</div>
+                        <div class="sd-meta-v">{num_rows:,}</div>
                     </div>
-                    '''
+                    <div class="sd-meta-chip sd-meta-chip-inline">
+                        <div class="sd-meta-k">Cols:</div>
+                        <div class="sd-meta-v">{num_cols}</div>
+                    </div>
+                    <div class="sd-meta-chip sd-meta-chip-inline">
+                        <div class="sd-meta-k">Hops:</div>
+                        <div class="sd-meta-v">{hops}</div>
+                    </div>
+                </div>
+                '''
                 
                 # Calculate dynamic height based on number of attributes
                 # Base height: header (~70px) + padding (~50px) + label (~30px) + margin (~20px) = ~170px
                 # Each row of attributes adds ~38px (badge height + gap)
                 # Assume ~3 attributes per row (with padding/borders, names can be long)
-                # Also ensure minimum height for the graph visualization (~150px)
-                attr_rows = max(1, (num_cols + 2) // 3)  # Ceiling division
-                content_height = 170 + (attr_rows * 38)
-                graph_min_height = 180  # Minimum for graph to display properly
-                dynamic_height = max(content_height, graph_min_height) + 30  # Extra buffer
+                # Graph is rendered below metadata with a fixed-height viewport.
+                # Estimate rows of attribute "pills" (very small pills => many per row).
+                attr_rows = max(1, (num_cols + 7) // 8)  # Ceiling division (~8 pills/row)
+
+                # Tight height estimation to avoid large blank iframe space, but still
+                # prevent clipping. The overall grid height is the max of:
+                # - left meta rail (Path/Rows/Cols/Hops stacked)
+                # - right main column (attrs + graph viewport)
+                attrs_block_height = 12 + (attr_rows * 14)  # label + rows
+                graph_area_height = 44  # Must match `.sd-unified-right { height: ... }`
+
+                # Meta rail is mostly constant height (4 chips + gaps). Keep a conservative
+                # estimate so it never gets clipped even if fonts render slightly taller.
+                meta_rail_height = 108
+
+                main_col_height = attrs_block_height + 6 + graph_area_height
+                content_h = max(meta_rail_height, main_col_height)
+
+                # Small buffer for card padding + borders; keep minimal whitespace.
+                # Add a few extra px so the bottom border/rounding never gets clipped.
+                dynamic_height = int(content_h + 36)
+                dynamic_height = max(110, dynamic_height)
                 
                 # Create the entire card HTML including graphviz in a single component
                 card_html = f"""
@@ -999,129 +1023,118 @@ def render() -> None:
                             height: auto;
                             overflow: visible;
                         }}
+                        /* Two columns: narrow meta rail + main content */
                         .sd-unified-component {{
-                            padding: 20px 24px;
+                            padding: 10px 12px;
                             background: linear-gradient(135deg, #FFFBEB 0%, #FFF7ED 100%);
-                            border-radius: 12px;
-                            border: 2px solid #FED7AA;
+                            border-radius: 9px;
+                            border: 1px solid #FED7AA;
                             box-shadow: 0 2px 4px rgba(249, 115, 22, 0.08);
                             display: grid;
-                            grid-template-columns: 1fr 1fr;
-                            gap: 24px;
+                            grid-template-columns: 6.25% 93.75%;
+                            gap: 8px;
                             min-height: fit-content;
                             height: auto;
-                            margin-bottom: 16px;
+                            margin-bottom: 0px;
                         }}
-                        .sd-unified-left {{
+                        .sd-col-meta {{
                             display: flex;
                             flex-direction: column;
-                            min-height: fit-content;
+                            gap: 6px;
+                            min-width: 46px; /* keep readable at very small widths */
                         }}
-                        .sd-unified-right {{
+                        .sd-col-main {{
                             display: flex;
                             flex-direction: column;
-                            align-items: center;
-                            justify-content: center;
-                            background: #FFFFFF;
-                            border-radius: 10px;
-                            padding: 16px;
-                            border: 1px solid #E2E8F0;
+                            gap: 6px;
+                            min-width: 0;
                         }}
-                        .sd-unified-header {{
+
+                        .sd-meta-stack {{
                             display: flex;
-                            align-items: center;
-                            gap: 12px;
-                            flex-wrap: wrap;
-                            margin-bottom: 16px;
-                            padding-bottom: 16px;
-                            border-bottom: 2px solid #FED7AA;
+                            flex-direction: column;
+                            gap: 6px;
                         }}
-                        .sd-unified-title {{
-                            display: flex;
-                            align-items: center;
-                            gap: 10px;
-                            flex-wrap: wrap;
-                        }}
-                        .sd-unified-label {{
-                            color: #1E293B;
-                            font-weight: 700;
-                            font-size: 0.85rem;
-                            text-transform: uppercase;
-                            letter-spacing: 0.05em;
-                        }}
-                        .sd-unified-rank {{
-                            display: inline-flex;
-                            align-items: center;
-                            justify-content: center;
-                            background: linear-gradient(135deg, #F97316 0%, #FDBA74 100%);
-                            color: white;
-                            padding: 4px 12px;
+                        .sd-meta-chip {{
+                            background: rgba(255,255,255,0.75);
+                            border: 1px solid rgba(2, 6, 23, 0.08);
                             border-radius: 8px;
-                            font-weight: 800;
-                            font-size: 1em;
-                            box-shadow: 0 2px 4px rgba(249, 115, 22, 0.3);
-                            min-width: 32px;
-                        }}
-                        .sd-unified-hops {{
-                            display: inline-flex;
-                            align-items: center;
-                            padding: 6px 14px;
-                            background: linear-gradient(135deg, #A78BFA 0%, #C4B5FD 100%);
-                            color: white;
-                            border-radius: 8px;
-                            font-weight: 700;
-                            font-size: 0.9rem;
-                            box-shadow: 0 2px 4px rgba(167, 139, 250, 0.3);
-                        }}
-                        .sd-unified-stats {{
-                            display: flex;
-                            align-items: flex-start;
-                            gap: 24px;
-                            margin-left: auto;
-                        }}
-                        .sd-stat-item {{
+                            padding: 6px 6px;
                             display: flex;
                             flex-direction: column;
                             align-items: flex-start;
+                            gap: 2px;
+                        }}
+                        .sd-meta-chip-inline {{
+                            flex-direction: row;
+                            align-items: baseline;
                             gap: 4px;
+                            padding: 4px 6px;
+                            border-radius: 7px;
                         }}
-                        .sd-stat-label {{
-                            font-size: 0.85rem;
-                            color: #475569;
-                            font-weight: 600;
+                        .sd-meta-chip-path {{
+                            background: linear-gradient(135deg, #F97316 0%, #C4B5FD 100%);
+                            border-color: rgba(2, 6, 23, 0.10);
+                            box-shadow: 0 2px 6px rgba(249, 115, 22, 0.25);
+                        }}
+                        .sd-meta-chip-path .sd-meta-k {{
+                            color: rgba(255,255,255,0.92);
+                        }}
+                        .sd-meta-chip-path .sd-meta-v {{
+                            color: #FFFFFF;
+                            font-size: 0.90rem;
+                            letter-spacing: -0.01em;
+                        }}
+                        .sd-meta-k {{
+                            font-size: 0.54rem;
+                            font-weight: 700;
+                            color: #6B7280;
                             text-transform: uppercase;
                             letter-spacing: 0.05em;
+                            line-height: 1.05;
                         }}
-                        .sd-stat-value {{
-                            font-size: 1.1rem;
-                            color: #334155;
-                            font-weight: 700;
+                        .sd-meta-v {{
+                            font-size: 0.74rem;
+                            font-weight: 800;
+                            color: #111827;
+                            line-height: 1.05;
+                        }}
+
+                        .sd-unified-right {{
+                            display: block;
+                            background: #FFFFFF;
+                            border-radius: 8px;
+                            padding: 4px;
+                            border: 1px solid #E2E8F0;
+                            height: 44px;
+                            overflow-x: auto;
+                            overflow-y: hidden;
                         }}
                         .sd-unified-attributes {{
-                            margin-top: 12px;
+                            margin-top: 0px;
                             flex: 1;
                             min-height: fit-content;
                         }}
                         .sd-unified-attributes-label {{
-                            font-size: 0.95rem;
+                            font-size: 0.78rem;
                             color: #334155;
                             font-weight: 700;
-                            margin-bottom: 10px;
+                            margin-bottom: 5px;
                             display: block;
                         }}
                         .sd-unified-attributes-list {{
                             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                            font-size: 0.88rem;
+                            font-size: 0.74rem;
                             color: #1E293B;
                             font-weight: 500;
-                            line-height: 1.8;
+                            line-height: 1.45;
                             display: flex;
                             flex-wrap: wrap;
-                            gap: 6px;
+                            gap: 4px;
                         }}
                         .sd-unified-attributes-list span {{
                             background: linear-gradient(135deg, #F5F3FF 0%, #DDD6FE 100%);
-                            padding: 4px 10px;
+                            padding: 2px 7px;
                             border-radius: 6px;
                             border: 1px solid #C4B5FD;
                             color: #5B21B6;
@@ -1129,32 +1142,29 @@ def render() -> None:
                         }}
                         #graph {{
                             width: 100%;
-                            display: flex;
-                            justify-content: center;
+                            display: block;
                         }}
                         #graph svg {{
-                            max-width: 100%;
-                            height: auto;
+                            height: 34px !important;
+                            width: auto !important;
+                            max-width: none !important;
+                            display: block;
                         }}
                     </style>
                 </head>
                 <body>
                     <div class="sd-unified-component">
-                        <div class="sd-unified-left">
-                            <div class="sd-unified-header">
-                                <div class="sd-unified-title">
-                                    <span class="sd-unified-label">Join Path</span>
-                                    <span class="sd-unified-rank">#{rank}</span>
-                                </div>
-                                {stats_html}
-                            </div>
+                        <div class="sd-col-meta">
+                            {stats_html}
+                        </div>
+                        <div class="sd-col-main">
                             <div class="sd-unified-attributes">
-                                <span class="sd-unified-attributes-label">Attributes ({num_cols}):</span>
+                                <span class="sd-unified-attributes-label">Attrs ({num_cols}):</span>
                                 <div class="sd-unified-attributes-list">{attributes_list}</div>
                             </div>
-                        </div>
-                        <div class="sd-unified-right" id="graphviz-container-{idx}">
-                            <div id="graph"></div>
+                            <div class="sd-unified-right" id="graphviz-container-{idx}">
+                                <div id="graph"></div>
+                            </div>
                         </div>
                     </div>
                     <script>
@@ -1162,6 +1172,9 @@ def render() -> None:
                         const viz = new Viz();
                         viz.renderSVGElement(dot)
                             .then(function(element) {{
+                                element.style.height = '34px';
+                                element.style.width = 'auto';
+                                element.style.maxWidth = 'none';
                                 document.getElementById('graph').appendChild(element);
                             }})
                             .catch(error => {{

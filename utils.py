@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import json
 import hashlib
 import math
 import time
@@ -352,15 +353,20 @@ def to_dot(
 
     lines = [
         "graph G {",
-        '  graph [rankdir="LR", bgcolor="white"];',
-        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica"];',
-        '  edge [color="#666666", fontname="Helvetica"];',
+        # Tighter layout: reduce spacing between ranks/nodes for shorter edges.
+        '  graph [rankdir="LR", bgcolor="white", ranksep="0.14", nodesep="0.10"];',
+        # Make nodes more compact (smaller height) for long join paths.
+        # Graphviz node `height` is a minimum (in inches) and labels can still expand it,
+        # so we also reduce font size and internal margins.
+        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];',
+        # Smaller edge label font so join-key labels don't dominate.
+        '  edge [color="#666666", fontname="Helvetica", fontsize="7"];',
     ]
 
     for (u, v), e in sorted(undirected.items(), key=lambda kv: kv[0]):
         is_hl = (u, v) in highlight or (v, u) in highlight
         color = "#d62728" if is_hl else "#666666"
-        penwidth = "3.0" if is_hl else "1.2"
+        penwidth = "2.0" if is_hl else "0.9"
         
         # Get the join key column name from each table
         # Currently e.key is the common column name, but we show it for both tables
@@ -694,9 +700,12 @@ def format_path(path: Sequence[str], edges: Sequence[EdgeInfo]) -> str:
 def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optional[Dict[str, pd.DataFrame]] = None) -> str:
     lines = [
         "graph P {",
-        '  graph [rankdir="LR", bgcolor="white"];',
-        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica"];',
-        '  edge [color="#d62728", fontname="Helvetica", penwidth="2.6"];',
+        # Tighter layout: reduce spacing between ranks/nodes for shorter edges.
+        '  graph [rankdir="LR", bgcolor="white", ranksep="0.14", nodesep="0.10"];',
+        # More compact nodes so long paths don't waste vertical space.
+        '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];',
+        # Smaller edge label font (about half default) for compact rendering.
+        '  edge [color="#d62728", fontname="Helvetica", fontsize="7", penwidth="1.4"];',
     ]
     for n in nodes:
         lines.append(f'  "{n}";')
@@ -754,8 +763,10 @@ def path_to_dot_highlighted(
     
     lines = [
         "graph P {",
-        '  graph [rankdir="LR", bgcolor="white"];',
-        f'  edge [color="{edge_color}", fontname="Helvetica", penwidth="2.6"];',
+        # Tighter layout: reduce spacing between ranks/nodes for shorter edges.
+        '  graph [rankdir="LR", bgcolor="white", ranksep="0.14", nodesep="0.10"];',
+        # Smaller edge label font (about half default) for compact rendering.
+        f'  edge [color="{edge_color}", fontname="Helvetica", fontsize="7", penwidth="1.4"];',
     ]
     
     for n in nodes:
@@ -770,7 +781,10 @@ def path_to_dot_highlighted(
             fill = default_fill
             border = default_border
         
-        lines.append(f'  "{n}" [shape="box", style="rounded,filled", fillcolor="{fill}", color="{border}", fontname="Helvetica"];')
+        lines.append(
+            f'  "{n}" [shape="box", style="rounded,filled", fillcolor="{fill}", color="{border}", '
+            f'fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];'
+        )
     
     for i, (e, nxt) in enumerate(zip(edges, nodes[1:])):
         left_join_key = e.key
@@ -781,6 +795,87 @@ def path_to_dot_highlighted(
     
     lines.append("}")
     return "\n".join(lines)
+
+
+def render_graphviz_fixed_height(dot: str, *, height_px: int = 220) -> None:
+    """Render a Graphviz DOT string at a fixed height with horizontal scroll.
+
+    Streamlit's native `st.graphviz_chart(..., use_container_width=True)` scales graphs
+    to the container width, which can shrink nodes when paths get long. This renderer
+    keeps a fixed height and allows the graph to grow left-to-right.
+    """
+    import streamlit.components.v1 as components
+
+    # Stable DOM id for this DOT string (avoid collisions inside an iframe).
+    dom_id = f"sd-gv-{token_for_bytes(dot.encode('utf-8', errors='ignore'))[:12]}"
+    dot_json = json.dumps(dot)
+
+    # Fit inside a fixed-height viewport, allow horizontal scrolling.
+    # Note: this runs in an iframe, so the CSS/JS is isolated per render.
+    inner_h = max(80, int(height_px) - 10)
+    component_h = int(height_px) + 28
+
+    html = f"""
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/viz.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/viz.js@2.1.2/full.render.js"></script>
+    <style>
+      html, body {{
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      }}
+      .sd-gv-wrap {{
+        width: 100%;
+        height: {int(height_px)}px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 8px;
+      }}
+      /* Override SVG attributes so it doesn't shrink to fit width */
+      .sd-gv-wrap svg {{
+        height: {inner_h}px !important;
+        width: auto !important;
+        max-width: none !important;
+        display: block;
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="sd-gv-wrap">
+      <div id="{dom_id}"></div>
+    </div>
+    <script>
+      (function() {{
+        const dot = {dot_json};
+        const viz = new Viz();
+        const mount = document.getElementById("{dom_id}");
+        viz.renderSVGElement(dot)
+          .then(function(el) {{
+            el.style.height = "{inner_h}px";
+            el.style.width = "auto";
+            el.style.maxWidth = "none";
+            mount.innerHTML = "";
+            mount.appendChild(el);
+          }})
+          .catch(function(err) {{
+            mount.innerHTML = '<div style="color:#B91C1C; font-size:13px;">Error rendering join path diagram</div>';
+            console.error(err);
+          }});
+      }})();
+    </script>
+  </body>
+</html>
+""".strip()
+
+    components.html(html, height=component_h, scrolling=False)
 
 
 def token_for_bytes(b: bytes) -> str:
@@ -833,10 +928,15 @@ def render_brand_header() -> None:
         st.markdown(svg, unsafe_allow_html=True)
     with c2:
         st.markdown(
-            "<div style='font-size:34px; font-weight:750; line-height:1.1;'>SemDisc</div>",
+            "<div style='font-size:24px; font-weight:750; line-height:1.05;'>SemDisc</div>",
             unsafe_allow_html=True,
         )
-        st.caption("Semantic discovery of joinable tables and join paths.")
+        st.markdown(
+            "<div style='font-size:0.85rem; color:#6B7280; margin-top:2px;'>"
+            "Semantic discovery of joinable tables and join paths."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:

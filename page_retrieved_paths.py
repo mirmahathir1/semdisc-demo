@@ -19,6 +19,7 @@ from utils import (
     materialize_path,
     path_to_dot,
     path_to_dot_highlighted,
+    render_graphviz_fixed_height,
     simple_paths_topk,
     SEMANTIC_TYPES,
 )
@@ -141,6 +142,9 @@ def render_join_path_card(
         card_border = "#FED7AA"
         badge_bg = "linear-gradient(135deg, #F97316 0%, #FDBA74 100%)"
     
+    # Fixed-height graph area so long join paths grow horizontally without shrinking nodes.
+    graph_height_px = 210
+
     card_html = f"""
     <div class="jp-card" style="background: {card_bg}; border-color: {card_border};">
         <div class="jp-header">
@@ -159,8 +163,9 @@ def render_join_path_card(
             const viz = new Viz();
             viz.renderSVGElement(dot)
                 .then(function(element) {{
-                    element.style.maxWidth = '100%';
-                    element.style.height = 'auto';
+                    element.style.height = '{graph_height_px}px';
+                    element.style.width = 'auto';
+                    element.style.maxWidth = 'none';
                     document.getElementById('graph-{rank}').appendChild(element);
                 }})
                 .catch(error => {{
@@ -358,7 +363,7 @@ def render() -> None:
                             highlight_blue=highlight_blue,
                             highlight_green_nodes=green_nodes,
                         )
-                        st.graphviz_chart(dot_source, use_container_width=True)
+                        render_graphviz_fixed_height(dot_source, height_px=220)
 
                 # Add button to switch to comparison view with these paths
                 st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
@@ -602,17 +607,18 @@ def render() -> None:
                     border-radius: 4px;
                 }}
                 .jp-graph {{
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    min-height: 150px;
+                    height: 230px;
+                    overflow-x: auto;
+                    overflow-y: hidden;
                     background: rgba(255,255,255,0.5);
                     border-radius: 8px;
                     padding: 12px;
                 }}
                 .jp-graph svg {{
-                    max-width: 100%;
-                    height: auto;
+                    height: 210px !important;
+                    width: auto !important;
+                    max-width: none !important;
+                    display: block;
                 }}
                 @media (max-width: 600px) {{
                     .jp-container {{
@@ -630,7 +636,8 @@ def render() -> None:
         """
         
         # Calculate dynamic height based on content
-        base_height = 320
+        # Slightly taller to accommodate fixed-height graph viewport + header.
+        base_height = 360
         if len(page_paths) == 1:
             component_height = base_height
         else:

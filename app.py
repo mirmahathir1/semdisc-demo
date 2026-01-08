@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 import streamlit.components.v1 as components
 
-from utils import bundled_query, render_brand_header, render_stage_stepper
+from utils import bundled_query, render_brand_header
 
 import page_upload_preprocess
 import page_navigate
@@ -189,16 +189,9 @@ def main() -> None:
         st.session_state.query_ready = False
         st.session_state.query_submitted = False
 
-    stage_labels = [
-        "Upload & Preprocess",
-        "Navigate Processed Data",
-        "Input Query Table",
-        "Retrieved Join Paths",
-    ]
     page_idx = int(st.session_state.page_idx)
     page_idx = max(0, min(3, page_idx))
     st.session_state.page_idx = page_idx
-    render_stage_stepper(current_idx=page_idx, stage_labels=stage_labels)
 
     # Route to the appropriate page
     if page_idx == 0:
