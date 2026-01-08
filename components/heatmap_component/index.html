@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Join paths heatmap</title>
+    <style>
+      :root {
+        --border: #e5e7eb;
+        --muted: #6b7280;
+        --text: #111827;
+        --bg: #ffffff;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+          "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+        color: var(--text);
+      }
+      .wrap {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--bg);
+      }
+      .head {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(135deg, #fffbeB 0%, #fff7ed 100%);
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: baseline;
+      }
+      .title {
+        font-weight: 800;
+        font-size: 0.98rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.86rem;
+        margin-top: 2px;
+      }
+      .legend {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .legend span {
+        color: var(--muted);
+        font-size: 0.82rem;
+        white-space: nowrap;
+      }
+      .swatch {
+        width: 90px;
+        height: 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(2, 6, 23, 0.12);
+        background: linear-gradient(90deg, #ffffff 0%, #9b1414 100%);
+      }
+      .scroller {
+        overflow: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        border: 1px solid #f3f4f6;
+        text-align: center;
+        padding: 0;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #ffffff;
+        font-weight: 750;
+        color: #374151;
+        font-size: 0.86rem;
+        padding: 8px 6px;
+      }
+      .yhdr {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        background: #ffffff;
+        font-weight: 700;
+        color: #475569;
+        font-size: 0.8rem;
+        padding: 0 8px;
+        text-align: left;
+        white-space: nowrap;
+        min-width: 138px;
+      }
+      .cell {
+        display: block;
+        width: 100%;
+        height: 34px;
+        cursor: pointer;
+        border-radius: 4px;
+      }
+      .cell:hover {
+        filter: brightness(0.96);
+      }
+      .cell.selected {
+        /* Thick orange border for selected cell */
+        box-shadow: inset 0 0 0 4px #f97316;
+        outline: 4px solid #f97316;
+        outline-offset: -4px;
+      }
+      .empty {
+        display: block;
+        width: 100%;
+        height: 34px;
+        background: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Minimal Streamlit component protocol implementation (no build tooling).
+      function sendMessage(type, data) {
+        window.parent.postMessage({ isStreamlitMessage: true, type, ...data }, "*");
+      }
+      sendMessage("streamlit:componentReady", { apiVersion: 1 });
+      sendMessage("streamlit:setFrameHeight", { height: 200 });
+ 
+      function clamp(x, lo, hi) {
+        return Math.max(lo, Math.min(hi, x));
+      }
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+      function rgbToHex(r, g, b) {
+        const hx = (n) => n.toString(16).padStart(2, "0");
+        return "#" + hx(r) + hx(g) + hx(b);
+      }
+      function redGradient(t) {
+        t = clamp(t, 0.0, 1.0);
+        const r = Math.round(lerp(255, 155, t));
+        const g = Math.round(lerp(255, 20, t));
+        const b = Math.round(lerp(255, 20, t));
+        return rgbToHex(r, g, b);
+      }
+      function computeBins(values, numBins) {
+        if (!values.length) return Array.from({ length: numBins }, () => [0, 0]);
+        const vmin = Math.min(...values);
+        const vmax = Math.max(...values);
+        if (vmin === vmax) return Array.from({ length: numBins }, () => [vmin, vmax]);
+        const width = (vmax - vmin) / numBins;
+        const edges = Array.from({ length: numBins + 1 }, (_, i) => vmin + i * width);
+        let bins = [];
+        for (let i = 0; i < numBins; i++) {
+          let lo = Math.round(edges[i]);
+          let hi = Math.round(edges[i + 1]);
+          if (i === 0) lo = vmin;
+          if (i === numBins - 1) hi = vmax;
+          if (hi < lo) hi = lo;
+          bins.push([lo, hi]);
+        }
+        // Fix rounding artifacts
+        let fixed = [];
+        let curLo = vmin;
+        for (let i = 0; i < bins.length; i++) {
+          const hi = bins[i][1];
+          if (i === bins.length - 1) fixed.push([curLo, vmax]);
+          else {
+            const hi2 = Math.max(curLo, hi);
+            fixed.push([curLo, hi2]);
+            curLo = hi2 + 1;
+          }
+        }
+        return fixed;
+      }
+      function binIndex(value, bins) {
+        for (let i = 0; i < bins.length; i++) {
+          const [lo, hi] = bins[i];
+          if (lo <= value && value <= hi) return i;
+        }
+        if (value < bins[0][0]) return 0;
+        return Math.max(0, bins.length - 1);
+      }
+ 
+      function renderHeatmap(args) {
+        const root = document.getElementById("root");
+        if (!root) return;
+ 
+        const cells = Array.isArray(args?.cells) ? args.cells : [];
+        const title = args?.title ?? "Join paths heatmap";
+        const heightPx = Number.isFinite(args?.height_px) ? Number(args.height_px) : 520;
+        const selectedBestPathKey =
+          typeof args?.selected_best_path_key === "string" ? args.selected_best_path_key : "";
+ 
+        if (!cells.length) {
+          root.innerHTML = '<div style="padding:12px;color:#6b7280;">No join paths available.</div>';
+          sendMessage("streamlit:setFrameHeight", { height: 60 });
+          return;
+        }
+ 
+        const nodeCounts = Array.from(new Set(cells.map((c) => Number(c.node_count)))).sort((a, b) => a - b);
+        const tupleCounts = cells.map((c) => Number(c.tuple_count));
+        const bins = computeBins(tupleCounts, 10);
+        const binsDesc = bins.slice().reverse();
+ 
+        // Aggregate per (row, col):
+        // - A cell can represent MANY join paths (same node_count + same tuple_count bin).
+        // - For color/tooltip summary, we still keep a representative "best" path: max tuple_count.
+        const byCell = new Map(); // key `${row}|${col}` -> { best: cell, pathKeys: string[], minTuple: number, maxTuple: number }
+        for (const c of cells) {
+          const bidx = binIndex(Number(c.tuple_count), bins);
+          const row = (bins.length - 1) - bidx;
+          const col = Number(c.node_count);
+          const key = row + "|" + col;
+          const prev = byCell.get(key);
+          if (!prev) {
+            const t = Number(c.tuple_count);
+            byCell.set(key, { best: c, pathKeys: [String(c.path_key)], minTuple: t, maxTuple: t });
+          } else {
+            const t = Number(c.tuple_count);
+            prev.pathKeys.push(String(c.path_key));
+            prev.minTuple = Math.min(prev.minTuple, t);
+            prev.maxTuple = Math.max(prev.maxTuple, t);
+            if (Number(c.tuple_count) > Number(prev.best.tuple_count)) prev.best = c;
+          }
+        }
+ 
+        // Color scale is based on the COUNT of join paths per heatmap cell.
+        const pathCounts = Array.from(byCell.values()).map((agg) =>
+          Array.isArray(agg?.pathKeys) ? agg.pathKeys.length : 1
+        );
+        const cmin = pathCounts.length ? Math.min(...pathCounts) : 0;
+        const cmax = pathCounts.length ? Math.max(...pathCounts) : 0;
+        const denom = Math.max(1, cmax - cmin);
+
+        // We still show tuple-count range in tooltips, but legend reflects path-counts (since color does).
+        const tmin = Math.min(...tupleCounts);
+        const tmax = Math.max(...tupleCounts);
+
+        const fmt = (n) => Number(n).toLocaleString();
+        const esc = (s) =>
+          String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+ 
+        let html = "";
+        html += '<div class="wrap">';
+        html += '<div class="head">';
+        html += `<div><div class="title">${esc(title)}</div>`;
+        html +=
+          '<div class="sub">X: nodes in path • Y: materialized tuple bins • click a cell to select a path</div></div>';
+        html += `<div class="legend"><span>${fmt(cmin)} → ${fmt(cmax)} paths</span><span class="swatch"></span></div>`;
+        html += "</div>";
+        html += `<div class="scroller" style="max-height:${heightPx}px">`;
+        html += "<table>";
+        html += "<thead><tr>";
+        html += '<th class="yhdr">Tuple count bin</th>';
+        for (const n of nodeCounts) html += `<th>${n}</th>`;
+        html += "</tr></thead>";
+        html += "<tbody>";
+ 
+        for (let rowIdx = 0; rowIdx < binsDesc.length; rowIdx++) {
+          const [lo, hi] = binsDesc[rowIdx];
+          html += "<tr>";
+          html += `<td class="yhdr">${fmt(lo)}–${fmt(hi)}</td>`;
+          for (const n of nodeCounts) {
+            const key = rowIdx + "|" + n;
+            const agg = byCell.get(key);
+            if (!agg) {
+              html += '<td><span class="empty"></span></td>';
+              continue;
+            }
+            const c = agg.best;
+            const pathCount = Array.isArray(agg.pathKeys) ? agg.pathKeys.length : 1;
+            const norm = (pathCount - cmin) / denom;
+            const color = redGradient(norm);
+            const tupleLo = Number.isFinite(agg.minTuple) ? agg.minTuple : Number(c.tuple_count);
+            const tupleHi = Number.isFinite(agg.maxTuple) ? agg.maxTuple : Number(c.tuple_count);
+            const tooltip = `Join paths: ${pathCount} | Tuples: ${fmt(tupleLo)}–${fmt(tupleHi)} | Nodes: ${c.node_count}`;
+            const isSelected = selectedBestPathKey && String(c.path_key) === String(selectedBestPathKey);
+            const cls = isSelected ? "cell selected" : "cell";
+            html +=
+              `<td><span class="${cls}" data-pathkey="${esc(c.path_key)}" data-pathkeys="${esc(
+                JSON.stringify(agg.pathKeys || [])
+              )}" data-nodes="${esc(c.node_count)}" data-binlo="${esc(lo)}" data-binhi="${esc(hi)}" title="${esc(tooltip)}" ` +
+              `style="background:${color};"></span></td>`;
+          }
+          html += "</tr>";
+        }
+ 
+        html += "</tbody></table></div></div>";
+        root.innerHTML = html;
+ 
+        const clickables = root.querySelectorAll(".cell[data-pathkey]");
+        clickables.forEach((el) => {
+          el.addEventListener("click", () => {
+            // Update selection styling immediately (no need to wait for Streamlit rerun).
+            root.querySelectorAll(".cell.selected").forEach((x) => x.classList.remove("selected"));
+            el.classList.add("selected");
+
+            const bestPathKey = el.getAttribute("data-pathkey") || "";
+            if (!bestPathKey) return;
+            const raw = el.getAttribute("data-pathkeys") || "[]";
+            let pathKeys = [];
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) pathKeys = parsed.map(String);
+            } catch (e) {
+              pathKeys = [bestPathKey];
+            }
+            const nodeCount = Number(el.getAttribute("data-nodes") || "");
+            const binLo = Number(el.getAttribute("data-binlo") || "");
+            const binHi = Number(el.getAttribute("data-binhi") || "");
+            // Include a timestamp so clicking the same cell still triggers a rerun.
+            sendMessage("streamlit:setComponentValue", {
+              value: {
+                best_path_key: bestPathKey,
+                path_keys: pathKeys,
+                node_count: nodeCount,
+                tuple_bin_lo: binLo,
+                tuple_bin_hi: binHi,
+                ts: Date.now(),
+              },
+            });
+          });
+        });
+ 
+        // Approximate frame height: header (~70px) + scroller height (capped) + borders.
+        const headerH = 72;
+        const frameH = Math.min(heightPx + headerH + 10, 900);
+        sendMessage("streamlit:setFrameHeight", { height: frameH });
+      }
+ 
+      window.addEventListener("message", (event) => {
+        const msg = event.data;
+        if (!msg || msg.type !== "streamlit:render") return;
+        renderHeatmap(msg.args || {});
+      });
+    </script>
+  </body>
+</html>
+

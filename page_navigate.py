@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
+from components.heatmap import HeatmapCell, render_joinpath_heatmap
 
 from utils import (
     EdgeInfo,
@@ -14,7 +16,108 @@ from utils import (
     materialize_path,
     path_to_dot,
     simple_paths_topk,
+    to_dot,
+    SEMANTIC_TYPES,
 )
+
+
+def _semantic_types_rows(tables: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    rows = []
+    for table_name in sorted(tables.keys()):
+        df = tables[table_name]
+        for col in list(df.columns):
+            stype = SEMANTIC_TYPES.get((table_name, col), "Unknown")
+            rows.append(
+                {
+                    "Table": table_name,
+                    "Column": col,
+                    "Semantic Type": stype,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _semantic_types_badge_table(df: pd.DataFrame) -> str:
+    # Render a small HTML table with semantic type badges (Streamlit `st.dataframe` does not
+    # reliably preserve per-cell styling across themes).
+    def esc(x: object) -> str:
+        return (
+            str(x)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    def badge_color(text: str) -> str:
+        # Stable pastel color derived from text (demo-only).
+        import hashlib
+
+        h = hashlib.md5(text.encode("utf-8", errors="ignore")).hexdigest()
+        hue = int(h[:2], 16) * 360 // 255  # 0..360
+        # Use comma-separated HSL for broad CSS compatibility.
+        return f"hsl({hue}, 70%, 92%)"
+
+    head = """
+<style>
+  .sd-semtypes {
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    overflow: hidden;
+    background: white;
+  }
+  .sd-semtypes table { width: 100%; border-collapse: collapse; }
+  .sd-semtypes thead th {
+    background: linear-gradient(135deg, #FFFBEB 0%, #FFF7ED 100%);
+    border-bottom: 1px solid #E5E7EB;
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 750;
+    color: #111827;
+    font-size: 0.92rem;
+  }
+  .sd-semtypes tbody td {
+    border-bottom: 1px solid #F3F4F6;
+    padding: 10px 12px;
+    vertical-align: top;
+    font-size: 0.92rem;
+    color: #111827;
+  }
+  .sd-semtypes tbody tr:hover td { background: #FAFAFA; }
+  .sd-pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(2, 6, 23, 0.10);
+    font-weight: 650;
+    color: #0F172A;
+    white-space: nowrap;
+  }
+  .sd-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    color: #334155;
+    font-weight: 600;
+  }
+</style>
+""".strip()
+
+    body = ['<div class="sd-semtypes"><table>']
+    body.append("<thead><tr><th>Table</th><th>Column</th><th>Semantic Type</th></tr></thead>")
+    body.append("<tbody>")
+    for _, r in df.iterrows():
+        table = esc(r["Table"])
+        col = esc(r["Column"])
+        stype = str(r["Semantic Type"])
+        color = badge_color(stype)
+        body.append(
+            "<tr>"
+            f'<td class="sd-mono">{table}</td>'
+            f'<td class="sd-mono">{col}</td>'
+            f'<td><span class="sd-pill" style="background:{color};">{esc(stype)}</span></td>'
+            "</tr>"
+        )
+    body.append("</tbody></table></div>")
+    return head + "\n" + "\n".join(body)
 
 
 def render() -> None:
@@ -37,35 +140,224 @@ def render() -> None:
 
     graph = build_join_graph(tables, min_edge_score=nav_min_edge_score)
 
-    # Compute "all" join paths by enumerating top-k paths from every start table,
-    # then deduplicate and globally sort by score.
-    paths: List[Tuple[List[str], float, List[EdgeInfo]]] = []
-    if graph:
-        by_nodes: Dict[Tuple[str, ...], Tuple[List[str], float, List[EdgeInfo]]] = {}
-        for start_table in sorted(tables.keys()):
-            for nodes, score, edges in simple_paths_topk(
-                graph=graph,
-                start=start_table,
-                max_hops=nav_max_hops,
-                k=nav_top_k_per_table,
-            ):
+    tab_join_paths, tab_semantic_types, tab_join_graph, tab_tables = st.tabs(
+        ["Join paths", "Semantic types", "Join graph", "Tables"]
+    )
+
+    with tab_join_graph:
+        st.subheader("Join graph")
+        st.caption("Undirected graph inferred from shared column names + overlapping values (Jaccard).")
+        if not graph:
+            st.warning("No join edges found with the current settings.")
+        else:
+            st.graphviz_chart(to_dot(graph), use_container_width=True)
+
+    with tab_semantic_types:
+        # Phase 2: Semantic Types (offline view)
+        st.subheader("Semantic types")
+        st.caption("Hardcoded LLM-style semantic annotations for each table column.")
+        if not tables:
+            st.warning("No tables available.")
+        else:
+            sem_df = _semantic_types_rows(tables)
+            c1, c2, c3 = st.columns([0.40, 0.35, 0.25])
+            with c1:
+                table_filter = st.selectbox(
+                    "Filter by table",
+                    options=["All"] + sorted(tables.keys()),
+                    key="nav_semtypes_table_filter",
+                )
+            with c2:
+                col_search = st.text_input(
+                    "Search column",
+                    value="",
+                    placeholder="e.g., customer_id",
+                    key="nav_semtypes_col_search",
+                )
+            with c3:
+                type_search = st.text_input(
+                    "Search semantic type",
+                    value="",
+                    placeholder="e.g., Identifier",
+                    key="nav_semtypes_type_search",
+                )
+
+            filt = sem_df
+            if table_filter != "All":
+                filt = filt[filt["Table"] == table_filter]
+            if col_search.strip():
+                filt = filt[filt["Column"].str.contains(col_search.strip(), case=False, na=False)]
+            if type_search.strip():
+                filt = filt[filt["Semantic Type"].str.contains(type_search.strip(), case=False, na=False)]
+
+            st.write(f"Showing {len(filt):,} / {len(sem_df):,} annotations")
+            st.markdown(_semantic_types_badge_table(filt), unsafe_allow_html=True)
+
+    with tab_tables:
+        st.subheader("Tables")
+        st.caption("Browse the processed data lake tables.")
+
+        if not tables:
+            st.warning("No tables available.")
+        else:
+            table_name = st.selectbox("Table", options=sorted(tables.keys()), key="nav_table_preview")
+            df = tables[table_name]
+            st.write(f"Rows: {df.shape[0]:,} • Cols: {df.shape[1]}")
+            st.dataframe(df, use_container_width=True, height=520)
+
+    with tab_join_paths:
+        # Compute "all" join paths by enumerating top-k paths from every start table,
+        # then deduplicate and globally sort by score.
+        paths: List[Tuple[List[str], float, List[EdgeInfo]]] = []
+        if graph:
+            by_nodes: Dict[Tuple[str, ...], Tuple[List[str], float, List[EdgeInfo]]] = {}
+            for start_table in sorted(tables.keys()):
+                for nodes, score, edges in simple_paths_topk(
+                    graph=graph,
+                    start=start_table,
+                    max_hops=nav_max_hops,
+                    k=nav_top_k_per_table,
+                ):
+                    if len(nodes) <= 1:
+                        continue
+                    key = tuple(nodes)
+                    prev = by_nodes.get(key)
+                    if prev is None or score > prev[1]:
+                        by_nodes[key] = (nodes, score, edges)
+            paths = sorted(by_nodes.values(), key=lambda x: x[1], reverse=True)
+
+        st.subheader("Join paths")
+        if not graph:
+            st.warning("No join edges found with the current settings.")
+            return
+        if not paths:
+            st.warning("No join paths found with the current settings.")
+            return
+
+        # Phase 3: Heatmap view (click to select a path, shown in side panel)
+        # Show all paths (no "paths to display" slider).
+        all_paths = list(paths)
+        paths = all_paths
+
+        heatmap_on = st.toggle(
+            "List view / Heatmap view",
+            value=bool(st.session_state.get("nav_heatmap_view", False)),
+            key="nav_heatmap_view",
+            help="Toggle between the scrollable list of join paths and the heatmap visualization.",
+        )
+        view_mode = "Heatmap view" if heatmap_on else "List view"
+
+        if view_mode == "Heatmap view":
+            # Compute lightweight path metadata for the heatmap.
+            cells: List[HeatmapCell] = []
+            by_key: Dict[str, Tuple[List[str], float, List[EdgeInfo]]] = {}
+            for nodes, score, edges in paths:
                 if len(nodes) <= 1:
                     continue
-                key = tuple(nodes)
-                prev = by_nodes.get(key)
-                if prev is None or score > prev[1]:
-                    by_nodes[key] = (nodes, score, edges)
-        paths = sorted(by_nodes.values(), key=lambda x: x[1], reverse=True)
+                path_key = " -> ".join(nodes)
+                by_key[path_key] = (nodes, score, edges)
+                try:
+                    mat = materialize_path(tables=tables, path_nodes=nodes, path_edges=edges)
+                    tuple_count = int(mat.shape[0])
+                except Exception:
+                    tuple_count = 0
+                cells.append(
+                    HeatmapCell(
+                        path_key=path_key,
+                        node_count=len(nodes),
+                        tuple_count=tuple_count,
+                    )
+                )
 
-    st.subheader("Join paths")
-    if not graph:
-        st.warning("No join edges found with the current settings.")
-    elif not paths:
-        st.warning("No join paths found with the current settings.")
-    else:
+            # Default selection (first path) so the heatmap can highlight it on first render.
+            if "nav_selected_heatmap_cell" not in st.session_state:
+                first = cells[0].path_key if cells else None
+                st.session_state.nav_selected_heatmap_cell = (
+                    {"best_path_key": first, "path_keys": [first]} if first else {}
+                )
+
+            left, right = st.columns([0.60, 0.40], gap="large")
+            with left:
+                sel0 = st.session_state.get("nav_selected_heatmap_cell", {}) or {}
+                selected_best_path_key = (
+                    str(sel0.get("best_path_key"))
+                    if isinstance(sel0, dict) and sel0.get("best_path_key") is not None
+                    else None
+                )
+                picked = render_joinpath_heatmap(
+                    cells=cells,
+                    query_param_key="nav_heatmap_sel",
+                    title="Join paths heatmap",
+                    height_px=560,
+                    selected_best_path_key=selected_best_path_key,
+                )
+
+            if isinstance(picked, dict) and picked:
+                # Store the clicked heatmap cell selection (may represent multiple paths).
+                ts = picked.get("ts")
+                last_ts = st.session_state.get("nav_heatmap_last_ts")
+                st.session_state.nav_selected_heatmap_cell = {k: v for k, v in picked.items() if k != "ts"}
+
+                # Force a single rerun on a *new* click so the component re-renders
+                # with the updated selection (otherwise it can momentarily snap back
+                # to the previous highlighted bin).
+                if ts is not None and ts != last_ts:
+                    st.session_state.nav_heatmap_last_ts = ts
+                    try:
+                        st.rerun()
+                    except Exception:
+                        st.experimental_rerun()
+
+            sel = st.session_state.get("nav_selected_heatmap_cell", {}) or {}
+            path_keys = sel.get("path_keys") if isinstance(sel, dict) else None
+            if not isinstance(path_keys, list):
+                path_keys = []
+            # Keep only valid join paths.
+            path_keys = [str(k) for k in path_keys if str(k) in by_key]
+            best_key = sel.get("best_path_key") if isinstance(sel, dict) else None
+            best_key = str(best_key) if best_key in by_key else (path_keys[0] if path_keys else None)
+
+            with right:
+                st.subheader("Selected heatmap cell")
+                if not path_keys:
+                    st.info("Click a heatmap cell to select a join path.")
+                else:
+                    tuple_bin_lo = sel.get("tuple_bin_lo") if isinstance(sel, dict) else None
+                    tuple_bin_hi = sel.get("tuple_bin_hi") if isinstance(sel, dict) else None
+                    node_count = sel.get("node_count") if isinstance(sel, dict) else None
+                    meta_parts = []
+                    if isinstance(node_count, (int, float)) and int(node_count) > 0:
+                        meta_parts.append(f"Nodes: {int(node_count)}")
+                    if isinstance(tuple_bin_lo, (int, float)) and isinstance(tuple_bin_hi, (int, float)):
+                        meta_parts.append(f"Tuple bin: {int(tuple_bin_lo):,}–{int(tuple_bin_hi):,}")
+                    meta_parts.append(f"Paths in cell: {len(path_keys):,}")
+                    st.caption(" • ".join(meta_parts))
+                    st.caption("Expand a path below to view its diagram.")
+
+                    # Show each representative path's diagram (collapsed behind expanders).
+                    cell_by_key = {c.path_key: c for c in cells}
+                    for i, k in enumerate(path_keys):
+                        expanded = bool(best_key) and (k == best_key) and len(path_keys) <= 3
+                        label = f"{i+1}. {k}"
+                        with st.expander(label, expanded=expanded):
+                            nodes, score, edges = by_key[k]
+                            cmeta = cell_by_key.get(k)
+                            if cmeta is not None:
+                                st.caption(
+                                    f"Nodes: {cmeta.node_count} • Tuples: {cmeta.tuple_count:,}"
+                                )
+                            st.graphviz_chart(
+                                path_to_dot(nodes, edges, tables=tables), use_container_width=True
+                            )
+
+            st.divider()
+            if st.button("➡️ Proceed to next stage", type="primary", use_container_width=True):
+                goto_stage(2)
+            st.stop()
+
         # CSS for styling path cards
         st.markdown(
-            """
+            r"""
 <style>
   .sd-pathcard { 
     border: 1px solid #FED7AA; 

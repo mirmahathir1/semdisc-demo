@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import json
 import pandas as pd
 import streamlit as st
@@ -30,11 +31,68 @@ def render() -> None:
         return
 
     tables = st.session_state.tables
-    query_df: pd.DataFrame = st.session_state.query_df
+    # Ensure a stable integer index for selection/highlighting.
+    query_df: pd.DataFrame = st.session_state.query_df.reset_index(drop=True)
+    st.session_state.query_df = query_df
 
     max_hops = int(st.session_state.ret_max_hops)
     min_edge_score = float(st.session_state.ret_min_edge_score)
     top_k = int(st.session_state.ret_top_k)
+
+    # ==================== Phase 4: Query table shown + interactive selection ====================
+    st.subheader("Query table")
+
+    # Default selection: first row (only once, when no selection exists yet).
+    if st.session_state.get("selected_row") is None and len(query_df) > 0:
+        st.session_state.selected_row = 0
+    st.session_state.setdefault("selected_column", None)
+
+    selected_row = st.session_state.get("selected_row")
+    selected_column = st.session_state.get("selected_column")
+
+    col_names = list(query_df.columns)
+
+    # Build table data for the component
+    table_data = {
+        "columns": [str(c) for c in col_names],
+        "rows": [],
+    }
+    for row_idx in range(len(query_df)):
+        row_vals = []
+        for col in col_names:
+            val = query_df.iloc[row_idx][col]
+            row_vals.append("" if pd.isna(val) else str(val))
+        table_data["rows"].append(row_vals)
+
+    # Declare the component
+    import os
+    component_dir = os.path.join(os.path.dirname(__file__), "components", "query_table_component")
+    query_table_component = components.declare_component("query_table_selector", path=component_dir)
+
+    # Render the component and get selection result
+    result = query_table_component(
+        data=table_data,
+        selected_row=selected_row,
+        selected_column=selected_column,
+        key="query_table_phase4",
+        default=None,
+    )
+
+    # Update session state if selection changed
+    if isinstance(result, dict):
+        new_row = result.get("selected_row")
+        new_col = result.get("selected_column")
+        changed = False
+        if new_row != selected_row:
+            st.session_state.selected_row = new_row
+            changed = True
+        if new_col != selected_column:
+            st.session_state.selected_column = new_col
+            changed = True
+        if changed:
+            st.rerun()
+
+    st.divider()
 
     graph = build_join_graph(tables, min_edge_score=min_edge_score)
     graph, tables_with_query = attach_query_node(

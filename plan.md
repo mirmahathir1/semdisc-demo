@@ -30,8 +30,9 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
   ```
 
 ### Join Path Count
-- **Hardcode 30 join paths** in the code
-- Provide a **slider** to control how many are displayed to the user (range: 10–30)
+- The demo data should yield **at least 30 discoverable join paths**
+- The Navigate page computes join paths dynamically (top‑k per start table, then dedup + global sort)
+- **No “10–30 paths” slider** is currently used on the Navigate page (all computed paths are shown in list/heatmap views)
 
 ---
 
@@ -40,9 +41,16 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 **Goal**: Expand the bundled demo data to support 30 join paths and add hardcoded semantic type annotations for all columns.
 
 ### Tasks
-- [ ] Expand `bundled_datalake()` in `utils.py` to include ~12-15 tables with more interconnections
-- [ ] Create a `SEMANTIC_TYPES` dictionary mapping `(table_name, column_name)` → semantic type string
-- [ ] Ensure the expanded data produces at least 30 unique join paths
+- [x] Expand `bundled_datalake()` in `utils.py` to include ~12-15 tables with more interconnections
+- [x] Create a `SEMANTIC_TYPES` dictionary mapping `(table_name, column_name)` → semantic type string
+- [x] Ensure the expanded data produces at least 30 unique join paths
+
+**Verification (current `utils.py`)**:
+- 15 bundled tables
+- 30 undirected join edges (at `min_edge_score=0.10`)
+- Default max hops is **5** (via `hp_simple_path_max_length` in `app.py`)
+- ~14,864 unique simple paths (up to **5** hops; exhaustive enumeration over the inferred join graph)
+- ~150 unique join paths in the Navigate UI list (deduped after taking top‑k per start table, with `k=10`)
 
 ### Deliverables
 - Updated `bundled_datalake()` function with expanded e-commerce tables
@@ -63,17 +71,17 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 **Goal**: Add a UI section on the "Navigate Processed Data" page to display discovered semantic types for each table's columns.
 
 ### Tasks
-- [ ] Add a new expandable section "Semantic Types" on the Navigate page
-- [ ] Display a table/grid showing: Table Name | Column Name | Semantic Type
-- [ ] Style the semantic types with subtle background colors or badges
+- [x] Add a "Semantic types" view on the Navigate page (implemented as a tab)
+- [x] Display a table/grid showing: Table Name | Column Name | Semantic Type
+- [x] Style semantic types as readable badges (custom HTML table for consistent styling)
 
 ### Deliverables
-- New "Semantic Types" section in `page_navigate.py`
+- New "Semantic types" tab in `page_navigate.py`
 
 ### How to Test
 1. Run the app and preprocess the bundled data
 2. Go to **"Navigate Processed Data"** page
-3. **Verify**: You see a new "Semantic Types" section (expandable or always visible)
+3. **Verify**: You see a **"Semantic types"** tab
 4. **Verify**: Each column from each table has a semantic type displayed
 5. **Verify**: The semantic types are readable strings (e.g., "Customer Identifier", "Order Date")
 
@@ -86,17 +94,17 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 ### Specifications
 - **X-axis**: Number of nodes in the join path
 - **Y-axis**: Tuple count bins (10 bins, dynamically computed)
-- **Color**: Single red gradient (white → dark red)
-- **Hover**: Show column overlap count and tuple count
-- **Click**: Display selected join path in side panel
+- **Color**: Single red gradient (white → dark red), based on **how many join paths fall in that cell** (path-count)
+- **Hover**: Show **join path count**, tuple-count range for the bin, and node count
+- **Click**: Select a **heatmap cell** (may represent multiple join paths) and display them in a side panel
 
 ### Tasks
-- [ ] Create `components/heatmap.py` with a function to render heatmap using Plotly or custom HTML/JS
-- [ ] Implement 10-bin calculation based on min/max tuple counts
-- [ ] Implement red gradient color scale
-- [ ] Add hover tooltip with column overlap count and tuple count
-- [ ] Add click handler that updates Streamlit session state with selected path
-- [ ] Create side panel layout to show selected join path (Graphviz)
+- [x] Create `components/heatmap.py` and `components/heatmap_component/index.html` to render a clickable heatmap (custom HTML/JS Streamlit component; no build tooling)
+- [x] Implement 10-bin calculation based on min/max tuple counts
+- [x] Implement a red gradient color scale (white → dark red)
+- [x] Add hover tooltip showing join path count + tuple-count range + node count
+- [x] Add click handler that updates Streamlit session state with the selected **cell** (`best_path_key` + `path_keys`)
+- [x] Add a side panel showing the selected cell metadata and Graphviz diagrams for the paths in that cell (expanders)
 
 ### Deliverables
 - New `components/heatmap.py` module
@@ -105,47 +113,48 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 ### How to Test
 1. Run the app and preprocess the bundled data
 2. Go to **"Navigate Processed Data"** page
-3. **Verify**: You see a toggle switch "List View / Heatmap View"
+3. Click the **"Join paths"** tab
+4. **Verify**: You see a toggle switch "List view / Heatmap view"
 4. Click the toggle to switch to **Heatmap View**
 5. **Verify**: Heatmap appears with X-axis (node count) and Y-axis (tuple bins)
-6. **Verify**: Cells are colored in red gradient (darker = more tuples)
-7. Hover over a cell → **Verify**: Tooltip shows "Column overlap: X, Tuple count: Y"
-8. Click a cell → **Verify**: The corresponding join path appears in the side panel as a Graphviz diagram
+6. **Verify**: Cells are colored in red gradient (darker = more join paths in that cell)
+7. Hover over a cell → **Verify**: Tooltip shows "Join paths: N | Tuples: A–B | Nodes: K"
+8. Click a cell → **Verify**: The cell highlights and the right-side panel shows the selected cell + one or more path diagrams (expandable)
 
 ---
 
 ## Phase 4: Query Table Interactive Selection
 
-**Goal**: Add row and column selection to the query table with visual highlighting and mutual exclusivity.
+**Goal**: Show the query table on the **Retrieved Join Paths** page and add row/column selection on that query table with visual highlighting and mutual exclusivity.
 
 ### Specifications
-- **Row selection**: Click a row → row turns blue, entire matching join paths highlight blue
-- **Column selection**: Click a column header → column highlights, matching nodes turn green
-- **Mutual exclusivity**: Selecting a row clears column selection, and vice versa
+- **Query table location**: The query table is rendered on the **Retrieved Join Paths** page (this is the table that receives selection + highlighting).
+- **Row selection**: Click a row → row turns blue (in the retrieved page query table), entire matching join paths highlight blue
+- **Column selection**: Click a column header → column highlights (in the retrieved page query table), matching nodes turn green
+- Selecting a row keeps column selection, and vice versa
 - **Default state**: First row is pre-selected on page load
 
 ### Tasks
-- [ ] Modify query table display to support row click selection
-- [ ] Modify query table display to support column header click selection
+- [ ] Ensure the query table is displayed on the **Retrieved Join Paths** page
+- [ ] Modify the retrieved-page query table display to support row click selection
+- [ ] Modify the retrieved-page query table display to support column header click selection
 - [ ] Add CSS styling for selected row (blue background)
 - [ ] Add CSS styling for selected column (green header)
 - [ ] Implement session state for `selected_row` and `selected_column`
-- [ ] Implement mutual exclusivity logic
 - [ ] Pre-select first row on initial page load
 
 ### Deliverables
-- Updated `page_query_input.py` with interactive selection
-- Updated `page_retrieved_paths.py` to read selection state
+- Updated `page_retrieved_paths.py` to render the query table and apply selection + highlighting there
+- Updated `page_query_input.py` to store the submitted query table in session state for use on the retrieved page
 
 ### How to Test
 1. Run the app, preprocess data, and submit a query table
 2. Go to **"Retrieved Join Paths"** page
-3. **Verify**: First row is pre-selected (highlighted blue) by default
-4. Click a different row → **Verify**: That row turns blue, previous selection clears
-5. Click a column header → **Verify**: Column highlights green, row selection clears
-6. Click a row again → **Verify**: Row turns blue, column selection clears
-7. **Verify**: Only one selection (row OR column) is active at any time
-
+3. **Verify**: The query table is visible on the Retrieved page
+4. **Verify**: First row is pre-selected (highlighted blue) by default (on the Retrieved page query table)
+5. Click a different row → **Verify**: That row turns blue, previous selection clears (on the Retrieved page query table)
+6. Click a column header → **Verify**: Column highlights green, row selection stays (on the Retrieved page query table)
+7. Click a row again → **Verify**: Row turns blue, column selection stays (on the Retrieved page query table)
 ---
 
 ## Phase 5: Join Path Comparison View with Pagination
@@ -224,9 +233,10 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 
 ### Frontend
 - **Framework**: Streamlit (existing)
-- **Charting**: Graphviz for join paths, Plotly/custom HTML for heatmap
+- **Charting**: Graphviz for join paths; custom HTML/JS Streamlit component for the heatmap (no Plotly build step)
 - **State management**: Streamlit session state for selections, pagination, view toggles
 - **Styling**: Custom CSS via `st.markdown(unsafe_allow_html=True)`
+- **Navigation**: Sidebar is hidden; navigation uses an in-page stepper/progress indicator + buttons
 
 ### Files to Modify/Create
 | Phase | Files |
@@ -244,7 +254,7 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 
 ### Tech Stack
 - **Framework**: Streamlit (Python) — existing
-- **Charting**: Graphviz for paths, Plotly/HTML for heatmap
+- **Charting**: Graphviz for paths; custom HTML/JS component for heatmap
 
 ### Data & Visualization
 - **Tables**: `Dict[str, pd.DataFrame]`
@@ -255,7 +265,7 @@ This plan outlines the implementation of UI enhancements for visualizing join pa
 ### Heatmap
 - **Bins**: 10 bins, dynamically computed
 - **Color**: Single red gradient (white → dark red)
-- **Click**: Shows path in side panel
+- **Click**: Selects a heatmap cell and shows one or more paths in a side panel
 
 ### Interaction
 - **Row selection**: Blue, highlights entire path

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    html, body { margin:0; padding:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: transparent; }
+    .qt-wrap { border:1px solid #d1d5db; border-radius:8px; overflow:hidden; background:#fff; }
+    .qt-scroll { max-height:260px; overflow:auto; }
+    .qt-table { width:100%; border-collapse:collapse; }
+    .qt-table th, .qt-table td { border:1px solid #e5e7eb; padding:8px 10px; font-size:0.88rem; }
+    .qt-table th { background:#f3f4f6; color:#374151; font-weight:700; text-align:left; cursor:pointer; user-select:none; }
+    .qt-table th:hover { background:#e5e7eb; }
+    .qt-table th.sel-col { background:rgba(34,197,94,0.45); color:#064E3B; }
+    .qt-table td.row-hdr { background:#f3f4f6; color:#374151; font-weight:600; text-align:center; cursor:pointer; user-select:none; }
+    .qt-table td.row-hdr:hover { background:#e5e7eb; }
+    .qt-table td.sel-row-hdr { background:rgba(59,130,246,0.35); color:#1e40af; font-weight:700; }
+    .qt-table td.sel-row { background:rgba(59,130,246,0.18); }
+    .qt-table td.sel-col { background:rgba(34,197,94,0.15); }
+    .qt-table td.sel-both { background:rgba(34,197,94,0.28); }
+    .loading { padding: 20px; color: #6b7280; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Loading query table...</div></div>
+<script>
+(function() {
+    function sendMessage(type, data) {
+        var msg = { isStreamlitMessage: true, type: type };
+        if (data) {
+            for (var k in data) {
+                if (data.hasOwnProperty(k)) msg[k] = data[k];
+            }
+        }
+        window.parent.postMessage(msg, "*");
+    }
+
+    function setFrameHeight(h) {
+        sendMessage("streamlit:setFrameHeight", { height: h });
+    }
+
+    function setComponentValue(value) {
+        sendMessage("streamlit:setComponentValue", { value: value });
+    }
+
+    // Signal ready
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setFrameHeight(300);
+
+    var currentArgs = null;
+    var selRow = null;
+    var selCol = null;
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function renderTable() {
+        var root = document.getElementById("root");
+        if (!currentArgs || !currentArgs.data) {
+            root.innerHTML = '<div class="loading">No data received</div>';
+            return;
+        }
+
+        var data = currentArgs.data;
+        var cols = data.columns || [];
+        var rows = data.rows || [];
+
+        if (cols.length === 0) {
+            root.innerHTML = '<div class="qt-wrap" style="padding:12px;color:#6b7280;">No columns</div>';
+            return;
+        }
+
+        // Header
+        var hdrCells = '<th style="width:50px;">Row</th>';
+        for (var i = 0; i < cols.length; i++) {
+            var isSel = selCol !== null && selCol === cols[i];
+            var cls = isSel ? "sel-col" : "";
+            hdrCells += '<th class="' + cls + '" data-col="' + i + '">' + escapeHtml(cols[i]) + '</th>';
+        }
+
+        // Body
+        var bodyRows = "";
+        for (var r = 0; r < rows.length; r++) {
+            var isRowSel = selRow !== null && selRow === r;
+            var rowHdrCls = isRowSel ? "row-hdr sel-row-hdr" : "row-hdr";
+            var cells = '<td class="' + rowHdrCls + '" data-row="' + r + '">' + r + '</td>';
+            for (var c = 0; c < cols.length; c++) {
+                var isColSel = selCol !== null && selCol === cols[c];
+                var cls = "";
+                if (isRowSel && isColSel) cls = "sel-both";
+                else if (isRowSel) cls = "sel-row";
+                else if (isColSel) cls = "sel-col";
+                var val = (rows[r] && rows[r][c] !== undefined) ? rows[r][c] : "";
+                cells += '<td class="' + cls + '">' + escapeHtml(val) + '</td>';
+            }
+            bodyRows += '<tr>' + cells + '</tr>';
+        }
+
+        root.innerHTML = 
+            '<div class="qt-wrap"><div class="qt-scroll"><table class="qt-table">' +
+            '<thead><tr>' + hdrCells + '</tr></thead>' +
+            '<tbody>' + bodyRows + '</tbody>' +
+            '</table></div></div>';
+
+        // Attach click handlers to column headers
+        var ths = root.querySelectorAll("th[data-col]");
+        for (var t = 0; t < ths.length; t++) {
+            (function(th) {
+                th.addEventListener("click", function(e) {
+                    e.preventDefault();
+                    var colIdx = parseInt(th.getAttribute("data-col"), 10);
+                    var colName = cols[colIdx];
+                    // Toggle
+                    if (selCol === colName) selCol = null;
+                    else selCol = colName;
+                    setComponentValue({ selected_row: selRow, selected_column: selCol, ts: Date.now() });
+                    renderTable();
+                });
+            })(ths[t]);
+        }
+
+        // Attach click handlers to row headers
+        var tds = root.querySelectorAll("td[data-row]");
+        for (var d = 0; d < tds.length; d++) {
+            (function(td) {
+                td.addEventListener("click", function(e) {
+                    e.preventDefault();
+                    var rowIdx = parseInt(td.getAttribute("data-row"), 10);
+                    // Toggle
+                    if (selRow === rowIdx) selRow = null;
+                    else selRow = rowIdx;
+                    setComponentValue({ selected_row: selRow, selected_column: selCol, ts: Date.now() });
+                    renderTable();
+                });
+            })(tds[d]);
+        }
+
+        // Adjust frame height
+        var h = root.offsetHeight + 10;
+        setFrameHeight(Math.max(100, Math.min(320, h)));
+    }
+
+    // Listen for render messages from Streamlit (same pattern as heatmap)
+    window.addEventListener("message", function(event) {
+        var msg = event.data;
+        if (!msg || msg.type !== "streamlit:render") return;
+        
+        currentArgs = msg.args || {};
+        
+        // Initialize selection from args
+        var sr = currentArgs.selected_row;
+        if (sr === null || sr === undefined || sr === "null") {
+            selRow = null;
+        } else {
+            selRow = parseInt(sr, 10);
+            if (isNaN(selRow)) selRow = null;
+        }
+        
+        var sc = currentArgs.selected_column;
+        if (sc === null || sc === undefined || sc === "null") {
+            selCol = null;
+        } else {
+            selCol = String(sc);
+        }
+        
+        renderTable();
+    });
+})();
+</script>
+</body>
+</html>

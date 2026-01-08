@@ -3,12 +3,13 @@ from __future__ import annotations
 import io
 import itertools
 import hashlib
+import math
 import time
 import zipfile
 from contextlib import nullcontext
 from collections import defaultdict, deque
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -177,16 +178,31 @@ def simple_paths_topk(
     max_hops: int,
     k: int,
 ) -> List[Tuple[List[str], float, List[EdgeInfo]]]:
-    # Rank by multiplicative score with a mild preference for shorter paths.
+    # Demo ranking: prefer "good" edges, but do not collapse everything to 1-hop.
+    #
+    # Key idea: multiplicative scoring makes longer paths vanish (product shrinks),
+    # so we instead use a length-normalized aggregation (geometric mean) and then
+    # deliberately diversify the returned set to include some longer paths.
     results: List[Tuple[List[str], float, List[EdgeInfo]]] = []
     q = deque()
-    q.append((start, [start], 1.0, []))  # node, path, score, edges
+    q.append((start, [start], []))  # node, path, edges
 
     while q:
-        node, path, score, edges = q.popleft()
+        node, path, edges = q.popleft()
         if len(path) > 1:
             hop_count = len(path) - 1
-            adjusted = score * (1.0 / (1.0 + 0.15 * hop_count))
+
+            # Length-normalized edge strength (0..1) using geometric mean.
+            # This avoids auto-favoring 1-hop paths purely due to multiplication.
+            eps = 1e-9
+            log_sum = 0.0
+            for e in edges:
+                log_sum += math.log(max(e.score, eps))
+            geom_mean = math.exp(log_sum / float(hop_count)) if hop_count > 0 else 0.0
+
+            # Small length bonus so multi-hop paths can appear in the top-k list.
+            length_bonus = 1.0 + 0.12 * hop_count
+            adjusted = float(geom_mean * length_bonus)
             results.append((path, adjusted, edges))
 
         if len(path) - 1 >= max_hops:
@@ -202,10 +218,105 @@ def simple_paths_topk(
                 continue  # Edge doesn't connect to current node
             if nxt in path:
                 continue
-            q.append((nxt, path + [nxt], score * max(e.score, 1e-9), edges + [e]))
+            q.append((nxt, path + [nxt], edges + [e]))
 
-    results.sort(key=lambda x: x[1], reverse=True)
-    return results[:k]
+    # Diversify by hop count so the UI includes some 4–5 node join paths when they exist.
+    by_hops: Dict[int, List[Tuple[List[str], float, List[EdgeInfo]]]] = defaultdict(list)
+    for path, score, edges in results:
+        by_hops[len(path) - 1].append((path, score, edges))
+    for hop_count in by_hops:
+        by_hops[hop_count].sort(key=lambda x: x[1], reverse=True)
+
+    picked: List[Tuple[List[str], float, List[EdgeInfo]]] = []
+    seen: Set[Tuple[str, ...]] = set()
+
+    # Coverage-first: pick the best path for each hop count (1..max_hops) so the UI
+    # naturally includes node counts 2..(max_hops+1) when available.
+    for hop_count in range(1, max_hops + 1):
+        items = by_hops.get(hop_count, [])
+        if not items:
+            continue
+        path, score, edges = items[0]
+        key = tuple(path)
+        if key in seen:
+            continue
+        picked.append((path, score, edges))
+        seen.add(key)
+        if len(picked) >= k:
+            return picked[:k]
+
+    # Fill the rest best-first across all hop counts.
+    leftovers: List[Tuple[List[str], float, List[EdgeInfo]]] = []
+    for hop_count, items in by_hops.items():
+        leftovers.extend(items)
+    leftovers.sort(key=lambda x: x[1], reverse=True)
+    for path, score, edges in leftovers:
+        if len(picked) >= k:
+            break
+        key = tuple(path)
+        if key in seen:
+            continue
+        picked.append((path, score, edges))
+        seen.add(key)
+
+    return picked[:k]
+
+
+def diversify_paths_by_node_count(
+    paths: Sequence[Tuple[List[str], float, List[EdgeInfo]]],
+    *,
+    min_nodes: int,
+    max_nodes: int,
+    k: int,
+) -> List[Tuple[List[str], float, List[EdgeInfo]]]:
+    """Pick up to k paths, ensuring a mix of node counts when possible.
+
+    Intended for UI display: if there exists at least one path for each node count
+    in [min_nodes, max_nodes], the returned list will include at least one of each.
+    """
+
+    by_n: Dict[int, List[Tuple[List[str], float, List[EdgeInfo]]]] = defaultdict(list)
+    for nodes, score, edges in paths:
+        n = len(nodes)
+        if min_nodes <= n <= max_nodes:
+            by_n[n].append((nodes, score, edges))
+
+    picked: List[Tuple[List[str], float, List[EdgeInfo]]] = []
+    seen: Set[Tuple[str, ...]] = set()
+
+    # Sort each node-count group by score so round-robin still keeps "best-first"
+    # within each length.
+    for n in by_n:
+        by_n[n].sort(key=lambda x: x[1], reverse=True)
+
+    # Round-robin across node counts so we don't collapse into only max_nodes.
+    idx_by_n: Dict[int, int] = {n: 0 for n in range(min_nodes, max_nodes + 1)}
+
+    while len(picked) < k:
+        progressed = False
+        for n in range(min_nodes, max_nodes + 1):
+            items = by_n.get(n, [])
+            i = idx_by_n.get(n, 0)
+            # Skip already-seen paths (can happen if caller already deduped partially).
+            while i < len(items) and tuple(items[i][0]) in seen:
+                i += 1
+            idx_by_n[n] = i
+            if i >= len(items):
+                continue
+            nodes, score, edges = items[i]
+            idx_by_n[n] = i + 1
+            key = tuple(nodes)
+            if key in seen:
+                continue
+            picked.append((nodes, score, edges))
+            seen.add(key)
+            progressed = True
+            if len(picked) >= k:
+                break
+        if not progressed:
+            break
+
+    return picked[:k]
 
 
 def materialize_path(
@@ -663,57 +774,51 @@ def render_brand_header() -> None:
 
 
 def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
+    # Render an in-page (main area) navigation progress indicator.
+    # This replaces the older sidebar-based vertical stepper.
+    n = max(1, len(stage_labels))
+    idx = int(max(0, min(n - 1, current_idx)))
+    pct = int(round(100.0 * float(idx + 1) / float(n)))
+
     css = """
 <style>
-  .sd-stepper { margin-top: 0.75rem; margin-bottom: 0.75rem; }
-  .sd-step { display: flex; align-items: center; gap: 0.65rem; }
-  .sd-col { display: flex; flex-direction: column; align-items: center; width: 24px; }
-  .sd-circle {
-    width: 18px; height: 18px; border-radius: 999px;
-    border: 2px solid #9CA3AF; background: #ffffff;
-    box-sizing: border-box;
-  }
-  .sd-circle.done { background: #F97316; border-color: #EA580C; }
-  .sd-circle.current {
-    background: #F97316; border-color: #EA580C;
-    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.28), 0 0 12px rgba(249, 115, 22, 0.55);
-  }
-  .sd-circle.todo { background: #F5F3FF; border-color: #C4B5FD; }
-  .sd-line {
-    width: 3px; flex: 1; min-height: 22px;
-    background: #DDD6FE; border-radius: 999px;
-    margin: 4px 0;
-  }
-  .sd-line.done { background: #F97316; }
-  .sd-label { font-size: 0.90rem; color: #111827; line-height: 1.1; }
-  .sd-label.current { font-weight: 750; }
-  .sd-label.todo { color: #4B5563; }
+  .sd-progress-wrap { margin: 0.75rem 0 1.0rem 0; }
+  .sd-bar { height: 10px; border-radius: 999px; background: #E5E7EB; overflow: hidden; margin-top: 0px; }
+  .sd-bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #F97316 0%, #C4B5FD 60%, #F97316 100%); border-radius: 999px; }
+  .sd-hstepper { display: grid; grid-template-columns: repeat(var(--sd-n), 1fr); gap: 10px; margin-top: 12px; }
+  .sd-hstep { display:flex; flex-direction:column; align-items:center; gap: 6px; text-align:center; }
+  .sd-dot { width: 14px; height: 14px; border-radius: 999px; border: 2px solid #9CA3AF; background: #ffffff; box-sizing: border-box; }
+  .sd-dot.done { background: #F97316; border-color: #EA580C; }
+  .sd-dot.current { background: #F97316; border-color: #EA580C; box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.20); }
+  .sd-dot.todo { background: #F5F3FF; border-color: #C4B5FD; }
+  .sd-step-label { font-size: 0.86rem; line-height: 1.15; color: #4B5563; }
+  .sd-step-label.current { color: #111827; font-weight: 750; }
+  .sd-step-label.done { color: #111827; }
 </style>
 """.strip()
 
-    lines = ['<div class="sd-stepper">']
+    parts = [f'<div class="sd-progress-wrap" style="--sd-n:{n}">']
+    parts.append(f'<div class="sd-bar"><div style="width:{pct}%;"></div></div>')
+
+    parts.append('<div class="sd-hstepper">')
     for i, label in enumerate(stage_labels):
-        circle_cls = "todo"
-        label_cls = "todo"
-        if i < current_idx:
-            circle_cls = "done"
-            label_cls = ""
-        elif i == current_idx:
-            circle_cls = "current"
-            label_cls = "current"
+        if i < idx:
+            dot_cls = "done"
+            lab_cls = "done"
+        elif i == idx:
+            dot_cls = "current"
+            lab_cls = "current"
+        else:
+            dot_cls = "todo"
+            lab_cls = ""
+        parts.append('<div class="sd-hstep">')
+        parts.append(f'<div class="sd-dot {dot_cls}"></div>')
+        parts.append(f'<div class="sd-step-label {lab_cls}">{label}</div>')
+        parts.append("</div>")
+    parts.append("</div>")
+    parts.append("</div>")
 
-        lines.append('<div class="sd-step">')
-        lines.append('<div class="sd-col">')
-        lines.append(f'<div class="sd-circle {circle_cls}"></div>')
-        if i < len(stage_labels) - 1:
-            seg_cls = "done" if i < current_idx else ""
-            lines.append(f'<div class="sd-line {seg_cls}"></div>')
-        lines.append("</div>")
-        lines.append(f'<div class="sd-label {label_cls}">{label}</div>')
-        lines.append("</div>")
-    lines.append("</div>")
-
-    st.sidebar.markdown(css + "\n" + "\n".join(lines), unsafe_allow_html=True)
+    st.markdown(css + "\n" + "\n".join(parts), unsafe_allow_html=True)
 
 
 def goto_stage(idx: int) -> None:

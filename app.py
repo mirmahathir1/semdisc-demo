@@ -17,6 +17,10 @@ def main() -> None:
     # Reduce top padding and define button colors
     st.markdown("""
         <style>
+            /* Hide Streamlit's sidebar entirely (use in-page navigation instead). */
+            section[data-testid="stSidebar"] { display: none !important; }
+            div[data-testid="collapsedControl"] { display: none !important; }
+
             .main .block-container {
                 padding-top: 1rem;
                 padding-bottom: 1rem;
@@ -165,13 +169,17 @@ def main() -> None:
     st.session_state.setdefault("hp_num_hashes_minhash", 128)
     st.session_state.setdefault("hp_join_edge_threshold", 0.10)
     st.session_state.setdefault("hp_semantic_type_similarity_threshold", 0.70)
-    st.session_state.setdefault("hp_simple_path_max_length", 3)
+    # Default to longer paths so the demo naturally shows 4–5 node join paths.
+    st.session_state.setdefault("hp_simple_path_max_length", 5)
     # Defaults for downstream screens (seeded from preprocessing hyperparameters)
     st.session_state.setdefault("nav_min_edge_score", float(st.session_state.hp_join_edge_threshold))
     st.session_state.setdefault("nav_max_hops", int(st.session_state.hp_simple_path_max_length))
     st.session_state.setdefault("ret_min_edge_score", float(st.session_state.hp_join_edge_threshold))
     st.session_state.setdefault("ret_max_hops", int(st.session_state.hp_simple_path_max_length))
     st.session_state.setdefault("ret_top_k", 10)
+    # Phase 4: Query table selection state (used on Retrieved Join Paths page)
+    st.session_state.setdefault("selected_row", None)
+    st.session_state.setdefault("selected_column", None)
     st.session_state.setdefault("page_idx", 0)
     st.session_state.setdefault("preprocess_log", [])
 
