@@ -17,17 +17,43 @@ def main() -> None:
     # Reduce top padding and define button colors
     st.markdown("""
         <style>
+            /* Streamlit often reserves a tall top header/toolbar area even when unused.
+               Collapse it so there's no huge whitespace above our brand header. */
+            header[data-testid="stHeader"] {
+                height: 0px !important;
+                min-height: 0px !important;
+                padding: 0px !important;
+                margin: 0px !important;
+                border: 0px !important;
+            }
+            header[data-testid="stHeader"] * { display: none !important; }
+            div[data-testid="stToolbar"] { display: none !important; }
+            div[data-testid="stDecoration"] { display: none !important; }
+
             /* Hide Streamlit's sidebar entirely (use in-page navigation instead). */
             section[data-testid="stSidebar"] { display: none !important; }
             div[data-testid="collapsedControl"] { display: none !important; }
 
-            .main .block-container {
-                padding-top: 1rem;
-                padding-bottom: 1rem;
+            /* Some Streamlit versions add a top offset/padding on the app container to
+               make room for the (fixed) header. Remove that too. */
+            div[data-testid="stAppViewContainer"],
+            div[data-testid="stAppViewContainer"] > .main,
+            div[data-testid="stAppViewContainer"] > .main > div,
+            section.main,
+            section.main > div {
+                padding-top: 0px !important;
+                margin-top: 0px !important;
             }
-            header[data-testid="stHeader"] {
-                padding-top: 0.5rem;
-                padding-bottom: 0.5rem;
+
+            /* Make sure the main content starts near the top. */
+            /* Streamlit has changed container class/testids across versions; cover both. */
+            div[data-testid="stAppViewBlockContainer"],
+            div[data-testid="stMainBlockContainer"],
+            div.block-container,
+            div[data-testid="stAppViewContainer"] .main .block-container,
+            .main .block-container {
+                padding-top: 0.25rem !important;
+                padding-bottom: 1rem !important;
             }
             /* Primary buttons - keep default Streamlit blue (targeted by Streamlit's baseButton-primary) */
             div[data-testid="baseButton-primary"] > button:not(:disabled),
@@ -105,30 +131,38 @@ def main() -> None:
         </style>
     """, unsafe_allow_html=True)
     
-    # Inject JavaScript via components.html to classify buttons by text content
-    # This runs in an iframe but accesses the parent document
-    components.html("""
+    render_brand_header()
+    
+    # Inject JavaScript via components.html to classify buttons by text content.
+    # NOTE: `height=0` can still reserve vertical space in some Streamlit builds,
+    # so keep this iframe at 1px and place it AFTER the brand header so it never
+    # creates whitespace above "SemDisc".
+    # This runs in an iframe but accesses the parent document.
+    components.html(
+        """
         <script>
             function addButtonClasses() {
                 const parent = window.parent.document;
-                
+
                 // Target all button containers in the parent document
-                const buttonContainers = parent.querySelectorAll('div[data-testid="stButton"], div[data-testid="baseButton-secondary"], div[data-testid="stDownloadButton"]');
-                
+                const buttonContainers = parent.querySelectorAll(
+                    'div[data-testid="stButton"], div[data-testid="baseButton-secondary"], div[data-testid="stDownloadButton"]'
+                );
+
                 buttonContainers.forEach(wrapper => {
                     const btn = wrapper.querySelector('button');
                     if (!btn) return;
-                    
+
                     const btnText = btn.textContent.trim();
-                    
+
                     // Skip primary buttons
                     if (wrapper.closest('div[data-testid="baseButton-primary"]')) {
                         return;
                     }
-                    
+
                     // Remove existing classes
                     wrapper.classList.remove('btn-reset', 'btn-action', 'btn-nav', 'btn-download');
-                    
+
                     // Classify buttons by text content
                     if (btnText.includes('Reset') || btnText.toLowerCase().includes('reset')) {
                         wrapper.classList.add('btn-reset');
@@ -141,21 +175,21 @@ def main() -> None:
                     }
                 });
             }
-            
+
             // Run immediately and on intervals to catch dynamically added buttons
             addButtonClasses();
             setTimeout(addButtonClasses, 100);
             setTimeout(addButtonClasses, 300);
             setTimeout(addButtonClasses, 500);
             setTimeout(addButtonClasses, 1000);
-            
+
             // Watch for DOM changes in parent document
             const observer = new MutationObserver(addButtonClasses);
             observer.observe(window.parent.document.body, { childList: true, subtree: true });
         </script>
-    """, height=0)
-    
-    render_brand_header()
+        """,
+        height=1,
+    )
 
     # Session state initialization
     st.session_state.setdefault("processed_ready", False)
