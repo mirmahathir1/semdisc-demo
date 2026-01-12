@@ -35,6 +35,13 @@ def get_tables_with_column_value(
     Returns set of table names where the column exists and contains
     the value from the selected row.
     """
+    # Semantic type to column name mapping for demo
+    semantic_to_column = {
+        "Order Identifier": "order_id",
+        "Customer IDs": "customer_id",
+        "Country Name": "country",
+    }
+    
     matching_tables = set()
     
     if selected_row is None or selected_row < 0 or selected_row >= len(query_df):
@@ -47,13 +54,22 @@ def get_tables_with_column_value(
     if not query_value or query_value.lower() == 'nan':
         return matching_tables
     
+    # Get the actual column name from semantic type
+    actual_column = semantic_to_column.get(column_name, column_name)
+    
     # Check each table for matching column and value
     for table_name, df in tables.items():
-        if column_name in df.columns:
-            # Check if any row contains the query value
-            col_values = df[column_name].astype(str).str.strip()
-            if query_value in col_values.values:
-                matching_tables.add(table_name)
+        if table_name == "query":
+            continue
+        # Check both semantic type name and actual column name
+        cols_to_check = [actual_column, column_name]
+        for col in cols_to_check:
+            if col in df.columns:
+                # Check if any row contains the query value
+                col_values = df[col].astype(str).str.strip()
+                if query_value in col_values.values:
+                    matching_tables.add(table_name)
+                    break
     
     return matching_tables
 
@@ -115,87 +131,73 @@ def generate_path_dot_white_nodes(
     """
     highlight_green_nodes = highlight_green_nodes or set()
     
+    # Use undirected graph (no arrows)
     lines = [
-        'digraph G {',
+        'graph G {',
         '  rankdir=LR;',
         '  bgcolor="transparent";',
-        '  node [shape=box, style="filled,rounded", fontname="Helvetica", fontsize=10, margin="0.2,0.1"];',
-        '  edge [fontname="Helvetica", fontsize=8, color="#94A3B8"];',
+        '  node [shape=box, style="filled,rounded", fontname="Helvetica", fontsize=16, margin="0.08,0.04", height="0.2"];',
+        '  edge [fontname="Helvetica", fontsize=12, color="#94A3B8"];',
     ]
     
-    # Add nodes with appropriate colors
+    # Add nodes with appropriate colors - only table name, no extra text
     for i, node in enumerate(nodes):
-        # Get row count for label
+        # Only show table name
         if node == "query":
             label = "Query"
-            row_count = ""
-        elif node in tables:
-            label = node
-            row_count = f"\\n({tables[node].shape[0]:,} rows)"
         else:
             label = node
-            row_count = ""
         
         # Determine node color
         if node in highlight_green_nodes:
-            # Green for column match - value from selected column exists in this table
             fill_color = "#D1FAE5"
             border_color = "#059669"
             font_color = "#065F46"
         elif node == "query":
-            # Query node - light blue
             fill_color = "#DBEAFE"
             border_color = "#3B82F6"
             font_color = "#1E40AF"
         else:
-            # Default - white with gray border
             fill_color = "#FFFFFF"
             border_color = "#D1D5DB"
             font_color = "#374151"
         
-        # Add match score indicator for non-query nodes if there's a partial match
-        score_indicator = ""
-        if match_score > 0 and match_score < 100 and node != "query" and node not in highlight_green_nodes:
-            # Partial match - show with light orange tint
-            opacity = min(0.3, match_score / 100 * 0.5)
-            fill_color = f"#FEF3C7"  # Light amber
-            border_color = "#F59E0B"
-            score_indicator = f"\\n[{match_score}%]"
-        elif match_score == 100 and node != "query" and node not in highlight_green_nodes:
-            # Full match - light blue tint
-            fill_color = "#EFF6FF"
-            border_color = "#3B82F6"
-        
         node_id = f'n{i}'
         lines.append(
-            f'  {node_id} [label="{label}{row_count}{score_indicator}", '
+            f'  {node_id} [label="{label}", '
             f'fillcolor="{fill_color}", color="{border_color}", fontcolor="{font_color}"];'
         )
     
-    # Add edges
+    # Add edges with join column pairs (like navigation page)
     for i, edge in enumerate(edges):
         src_idx = i
         dst_idx = i + 1
         
-        # Edge label shows join columns
-        if hasattr(edge, 'left_col') and hasattr(edge, 'right_col'):
-            edge_label = f"{edge.left_col}={edge.right_col}"
-        else:
-            edge_label = ""
+        # Show join column pairs like navigation page
+        right_key = edge.right_key if getattr(edge, "right_key", None) is not None else edge.key
+        edge_label = f"{edge.key}, {right_key}"
         
-        # Edge color based on match
+        # Edge color based on join type (equi vs semantic), independent of match highlighting.
+        join_type = getattr(edge, "join_type", "equi")
+        if join_type == "semantic":
+            edge_color = "#F97316"  # semantic join (orange)
+        else:
+            edge_color = "#2563EB"  # equi-join (blue)
+
+        # Keep match information via stroke width/style (not color).
         if match_score == 100:
-            edge_color = "#3B82F6"  # Blue for full match
-            edge_width = "2"
+            edge_width = "2.2"
+            edge_style = "bold"
         elif match_score > 0:
-            edge_color = "#F59E0B"  # Amber for partial match
-            edge_width = "1.5"
+            edge_width = "1.6"
+            edge_style = "solid"
         else:
-            edge_color = "#94A3B8"  # Gray for no match
-            edge_width = "1"
+            edge_width = "1.2"
+            edge_style = "solid"
         
+        # Use undirected edge (--)
         lines.append(
-            f'  n{src_idx} -> n{dst_idx} [label="{edge_label}", color="{edge_color}", penwidth="{edge_width}"];'
+            f'  n{src_idx} -- n{dst_idx} [label="{edge_label}", color="{edge_color}", penwidth="{edge_width}", style="{edge_style}"];'
         )
     
     lines.append('}')
@@ -206,9 +208,9 @@ def generate_path_dot_white_nodes(
 def render() -> None:
     """Render Stage 3: Retrieved Join Paths with Comparison View and Pagination."""
     if not st.session_state.processed_ready:
-        st.info("Go to **Upload and Preprocess** first.")
+        st.info("Please preprocess your data using the controls in the header first.")
         if st.button("⬅️ Back", use_container_width=True):
-            goto_stage(0)
+            goto_stage(1)
         return
     if not st.session_state.query_submitted or st.session_state.query_df is None:
         st.info("Go to **Input Query Table** first.")
@@ -221,7 +223,9 @@ def render() -> None:
     st.session_state.query_df = query_df
 
     max_hops = int(st.session_state.ret_max_hops)
-    min_edge_score = float(st.session_state.ret_min_edge_score)
+    # Use a fixed low threshold for the demo to ensure join paths are always found
+    # (hyperparameters are displayed but don't affect the simulated results)
+    min_edge_score = 0.10  # Fixed for demo simulation
     
     # Initialize pagination and display settings
     if "comparison_page" not in st.session_state:
@@ -229,10 +233,11 @@ def render() -> None:
     if "num_display_paths" not in st.session_state:
         st.session_state.num_display_paths = 20
 
-    # Default selection: first row
+    # Default selection: first row and first column
     if st.session_state.get("selected_row") is None and len(query_df) > 0:
         st.session_state.selected_row = 0
-    st.session_state.setdefault("selected_column", None)
+    if st.session_state.get("selected_column") is None and len(query_df.columns) > 0:
+        st.session_state.selected_column = query_df.columns[0]
 
     selected_row = st.session_state.get("selected_row")
     selected_column = st.session_state.get("selected_column")
@@ -253,8 +258,6 @@ def render() -> None:
     # Limit paths to the selected number from session state (slider is on query page)
     num_paths = st.session_state.num_display_paths
     paths = all_paths[:num_paths]
-
-    st.subheader("Retrieved Join Paths")
 
     # ====================  Build heatmap data ====================
     # Compute lightweight path metadata for the heatmap
@@ -309,7 +312,7 @@ def render() -> None:
 
     # ==================== Main Layout ====================
     # Left column: Query table + Heatmap, Right column: Join paths
-    col_left, col_right = st.columns([0.35, 0.65], gap="large")
+    col_left, col_right = st.columns([0.20, 0.80], gap="small")
 
     with col_left:
         st.markdown("#### Query Table")
@@ -360,7 +363,7 @@ def render() -> None:
         <style>
         /* Remove whitespace between query table, caption, and heatmap */
         .heatmap-caption {
-            margin: 0 !important;
+            margin: 0 0 8px 0 !important;
             padding: 4px 0 2px 0 !important;
             font-size: 0.85em;
             color: #6B7280;
@@ -387,7 +390,7 @@ def render() -> None:
         """, unsafe_allow_html=True)
         
         # Use a fixed generous height to ensure no scrolling needed
-        heatmap_height = 500
+        heatmap_height = 250
         
         sel0 = st.session_state.get("ret_selected_heatmap_cell", {}) or {}
         selected_best_path_key = (
@@ -436,31 +439,25 @@ def render() -> None:
             meta_parts.append(f"Paths: {len(heatmap_path_keys)}")
             st.caption("Selected: " + " • ".join(meta_parts))
         
-        # Navigation buttons
-        st.markdown("---")
-        if st.button("⬅️ Back to Query Input", use_container_width=True):
-            goto_stage(2)
-        if st.button("🔄 Restart", type="primary", use_container_width=True):
-            goto_stage(0)
 
     with col_right:
         st.markdown("#### Join Paths")
         
         # Highlighting legend (horizontal)
         st.markdown("""
-        <div style="margin-bottom: 12px; padding: 8px 12px; background: #F8FAFC; border-radius: 8px; border: 1px solid #E2E8F0; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-            <span style="font-weight: 600; color: #334155; font-size: 0.85em;">Highlighting:</span>
-            <div style="display: flex; align-items: center; gap: 4px;">
-                <div style="width: 12px; height: 12px; background: #DBEAFE; border: 2px solid #2563EB; border-radius: 2px;"></div>
-                <span style="color: #475569; font-size: 0.85em;">Full match</span>
+        <div style="margin-bottom: 12px; padding: 10px 14px; background: #F8FAFC; border-radius: 8px; border: 1px solid #E2E8F0; display: flex; align-items: center; gap: 18px; flex-wrap: wrap;">
+            <span style="font-weight: 600; color: #334155; font-size: 1.05em;">Highlighting:</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="width: 14px; height: 14px; background: #DBEAFE; border: 2px solid #2563EB; border-radius: 2px;"></div>
+                <span style="color: #475569; font-size: 1em;">Full tuple match</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 4px;">
-                <div style="width: 12px; height: 12px; background: #FEF3C7; border: 2px solid #F59E0B; border-radius: 2px;"></div>
-                <span style="color: #475569; font-size: 0.85em;">Partial</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="width: 14px; height: 14px; background: #FEF3C7; border: 2px solid #F59E0B; border-radius: 2px;"></div>
+                <span style="color: #475569; font-size: 1em;">Partial tuple match</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 4px;">
-                <div style="width: 12px; height: 12px; background: #D1FAE5; border: 2px solid #059669; border-radius: 2px;"></div>
-                <span style="color: #475569; font-size: 0.85em;">Column match</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="width: 14px; height: 14px; background: #D1FAE5; border: 2px solid #059669; border-radius: 2px;"></div>
+                <span style="color: #475569; font-size: 1em;">Column match</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -484,7 +481,8 @@ div[data-testid="stCustomComponentV1"] iframe {
 margin: 0 !important;
 padding: 0 !important;
 }
-div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !important; }
+div.element-container { margin-bottom: -8px !important; padding-bottom: 0 !important; }
+div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
 </style>
 """,
             unsafe_allow_html=True,
@@ -495,7 +493,16 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
             for k in display_path_keys:
                 nodes, score, edges = by_key[k]
                 rank = int(rank_by_key.get(k, 0)) or 0
-                hops = len(nodes) - 1
+                
+                # Skip the "query" node from display - show only datalake tables
+                if nodes and nodes[0] == "query":
+                    display_nodes = nodes[1:]
+                    display_edges = edges[1:] if len(edges) > 0 else []
+                else:
+                    display_nodes = nodes
+                    display_edges = edges
+                
+                hops = len(display_nodes) - 1 if len(display_nodes) > 1 else 0
 
                 try:
                     materialized = materialize_path(
@@ -544,35 +551,28 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                     badge_bg = "linear-gradient(135deg, #6B7280 0%, #9CA3AF 100%)"
                     shadow_color = "rgba(107, 114, 128, 0.08)"
 
-                attributes_list = (
-                    "".join([f"<span>{html.escape(str(a))}</span>" for a in attributes]) if num_cols > 0 else ""
-                )
+                # Show first 5 attributes, with "Show all" button if more
+                max_visible = 5
+                if num_cols > max_visible:
+                    visible_attrs = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes[:max_visible]])
+                    hidden_attrs = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes[max_visible:]])
+                    attributes_list = f'{visible_attrs}<span class="hidden-attrs" style="display:none;">{hidden_attrs}</span><button class="show-all-btn" onclick="this.previousElementSibling.style.display=\'inline\';this.style.display=\'none\';">+{num_cols - max_visible} more</button>'
+                else:
+                    attributes_list = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes]) if num_cols > 0 else ""
                 
-                # Use custom DOT generation with white nodes
+                # Use custom DOT generation with white nodes (without query node)
                 dot_source = generate_path_dot_white_nodes(
-                    nodes, edges, tables=tables_with_query,
+                    display_nodes, display_edges, tables=tables_with_query,
                     highlight_green_nodes=green_nodes,
                     match_score=match_score,
                 )
                 dot_json = json.dumps(dot_source)
 
-                # Match score indicator
-                match_indicator = ""
-                if match_score > 0:
-                    match_indicator = f'''
-                    <div class="sd-meta-chip sd-meta-chip-inline" style="background: {'#DBEAFE' if is_full_match else '#FEF3C7'}; border-color: {'#3B82F6' if is_full_match else '#F59E0B'};">
-                        <div class="sd-meta-k" style="color: {'#1E40AF' if is_full_match else '#92400E'};">Match:</div>
-                        <div class="sd-meta-v" style="color: {'#1E40AF' if is_full_match else '#92400E'};">{match_score}%</div>
-                    </div>
-                    '''
-
                 stats_html = f'''
                 <div class="sd-meta-stack">
-                    <div class="sd-meta-chip sd-meta-chip-path" style="background: {badge_bg};">
-                        <div class="sd-meta-k">Path</div>
+                    <div class="sd-meta-chip sd-meta-chip-plain">
                         <div class="sd-meta-v">#{rank}</div>
                     </div>
-                    {match_indicator}
                     <div class="sd-meta-chip sd-meta-chip-inline">
                         <div class="sd-meta-k">Rows:</div>
                         <div class="sd-meta-v">{num_rows:,}</div>
@@ -590,12 +590,12 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
 
                 attr_rows = max(1, (num_cols + 7) // 8)
                 attrs_block_height = 12 + (attr_rows * 14)
-                graph_area_height = 44
+                graph_area_height = 66
                 meta_rail_height = 108
                 main_col_height = attrs_block_height + 6 + graph_area_height
                 content_h = max(meta_rail_height, main_col_height)
-                dynamic_height = int(content_h + 36)
-                dynamic_height = max(110, dynamic_height)
+                dynamic_height = int(content_h - 10)
+                dynamic_height = max(80, dynamic_height)
 
                 card_html = f"""
                 <!DOCTYPE html>
@@ -614,17 +614,17 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                             overflow: visible;
                         }}
                         .sd-unified-component {{
-                            padding: 10px 12px;
+                            padding: 8px 10px;
                             background: {card_bg};
                             border-radius: 9px;
                             border: 1px solid {card_border};
                             box-shadow: 0 2px 4px {shadow_color};
                             display: grid;
                             grid-template-columns: 6.25% 93.75%;
-                            gap: 8px;
+                            gap: 6px;
                             min-height: fit-content;
                             height: auto;
-                            margin: 0;
+                            margin: 0 0 2px 0;
                         }}
                         .sd-col-meta {{
                             display: flex;
@@ -667,11 +667,21 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                         .sd-meta-chip-path .sd-meta-k {{ color: rgba(255,255,255,0.92); }}
                         .sd-meta-chip-path .sd-meta-v {{
                             color: #FFFFFF;
-                            font-size: 0.90rem;
+                            font-size: 1.2rem;
                             letter-spacing: -0.01em;
                         }}
+                        .sd-meta-chip-plain {{
+                            background: transparent;
+                            border: none;
+                            padding: 2px 0;
+                        }}
+                        .sd-meta-chip-plain .sd-meta-v {{
+                            color: #6B7280;
+                            font-size: 0.70rem;
+                            font-weight: 600;
+                        }}
                         .sd-meta-k {{
-                            font-size: 0.44rem;
+                            font-size: 0.65rem;
                             font-weight: 700;
                             color: #6B7280;
                             text-transform: uppercase;
@@ -679,7 +689,7 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                             line-height: 1.05;
                         }}
                         .sd-meta-v {{
-                            font-size: 0.60rem;
+                            font-size: 0.85rem;
                             font-weight: 800;
                             color: #111827;
                             line-height: 1.05;
@@ -688,45 +698,55 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                             margin-top: 0px;
                             flex: 1;
                             min-height: fit-content;
-                        }}
-                        .sd-unified-attributes-label {{
-                            font-size: 0.78rem;
-                            color: #334155;
-                            font-weight: 700;
-                            margin-bottom: 5px;
-                            display: block;
-                        }}
-                        .sd-unified-attributes-list {{
-                            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                            font-size: 0.50rem;
-                            color: #1E293B;
-                            font-weight: 500;
-                            line-height: 1.45;
                             display: flex;
                             flex-wrap: wrap;
+                            align-items: center;
                             gap: 4px;
                         }}
-                        .sd-unified-attributes-list span {{
+                        .sd-unified-attributes-label {{
+                            font-size: 0.85rem;
+                            color: #6B7280;
+                            font-weight: 400;
+                            display: inline;
+                            margin-right: 4px;
+                        }}
+                        .sd-unified-attributes .attr-badge {{
+                            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                            font-size: 0.75rem;
                             background: linear-gradient(135deg, #F5F3FF 0%, #DDD6FE 100%);
-                            padding: 2px 7px;
+                            padding: 3px 8px;
                             border-radius: 6px;
                             border: 1px solid #C4B5FD;
                             color: #5B21B6;
                             font-weight: 600;
                         }}
+                        .show-all-btn {{
+                            background: #F97316;
+                            color: white;
+                            border: none;
+                            padding: 3px 8px;
+                            border-radius: 6px;
+                            font-size: 0.70rem;
+                            font-weight: 600;
+                            cursor: pointer;
+                            margin-left: 2px;
+                        }}
+                        .show-all-btn:hover {{
+                            background: #EA580C;
+                        }}
                         .sd-unified-right {{
                             display: block;
                             background: #FFFFFF;
                             border-radius: 8px;
-                            padding: 4px;
+                            padding: 4px 4px 12px 4px;
                             border: 1px solid #E2E8F0;
-                            height: 44px;
+                            height: 66px;
                             overflow-x: auto;
                             overflow-y: hidden;
                         }}
                         #graph-{rank} {{ width: 100%; display: block; }}
                         #graph-{rank} svg {{
-                            height: 34px !important;
+                            height: 44px !important;
                             width: auto !important;
                             max-width: none !important;
                             display: block;
@@ -738,8 +758,7 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                         <div class="sd-col-meta">{stats_html}</div>
                         <div class="sd-col-main">
                             <div class="sd-unified-attributes">
-                                <span class="sd-unified-attributes-label">Attrs ({num_cols}):</span>
-                                <div class="sd-unified-attributes-list">{attributes_list}</div>
+                                <span class="sd-unified-attributes-label">Attrs ({num_cols}):</span>{attributes_list}
                             </div>
                             <div class="sd-unified-right">
                                 <div id="graph-{rank}"></div>
@@ -751,7 +770,7 @@ div.element-container { margin-bottom: 0 !important; padding-bottom: 0 !importan
                         const viz_{rank} = new Viz();
                         viz_{rank}.renderSVGElement(dot_{rank})
                             .then(function(element) {{
-                                element.style.height = '34px';
+                                element.style.height = '44px';
                                 element.style.width = 'auto';
                                 element.style.maxWidth = 'none';
                                 document.getElementById('graph-{rank}').appendChild(element);

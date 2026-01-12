@@ -3,9 +3,15 @@ from __future__ import annotations
 import streamlit as st
 import streamlit.components.v1 as components
 
-from utils import bundled_query, render_brand_header
+from utils import (
+    bundled_datalake,
+    bundled_query,
+    ensure_nonempty_tables,
+    goto_stage,
+    render_brand_header,
+    simulate_preprocessing,
+)
 
-import page_upload_preprocess
 import page_navigate
 import page_query_input
 import page_retrieved_paths
@@ -66,41 +72,41 @@ def main() -> None:
                 background-color: rgb(15, 82, 204) !important;
                 border-color: rgb(15, 82, 204) !important;
             }
-            /* Secondary buttons - orange (default for non-primary buttons) */
+            /* Secondary buttons - blue (default for non-primary buttons) */
             div[data-testid="stButton"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled),
             div[data-testid="baseButton-secondary"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled) {
-                background-color: #F97316 !important;
+                background-color: #2563EB !important;
                 color: white !important;
-                border-color: #F97316 !important;
+                border-color: #2563EB !important;
             }
             div[data-testid="stButton"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled):hover,
             div[data-testid="baseButton-secondary"]:not(.btn-reset):not(.btn-action):not(.btn-nav):not(.btn-download) > button:not(:disabled):hover {
-                background-color: #EA580C !important;
-                border-color: #EA580C !important;
+                background-color: #1D4ED8 !important;
+                border-color: #1D4ED8 !important;
             }
-            /* Reset buttons - light orange */
+            /* Reset buttons - light blue */
             .btn-reset > button:not(:disabled),
             div[data-testid="stButton"].btn-reset > button:not(:disabled) {
-                background-color: #FDBA74 !important;
+                background-color: #93C5FD !important;
                 color: white !important;
-                border-color: #FDBA74 !important;
+                border-color: #93C5FD !important;
             }
             .btn-reset > button:not(:disabled):hover,
             div[data-testid="stButton"].btn-reset > button:not(:disabled):hover {
-                background-color: #FB923C !important;
-                border-color: #FB923C !important;
+                background-color: #60A5FA !important;
+                border-color: #60A5FA !important;
             }
-            /* Action buttons (Add, etc.) - light orange (same as download) */
+            /* Action buttons (Add, etc.) - light blue (same as download) */
             .btn-action > button:not(:disabled),
             div[data-testid="stButton"].btn-action > button:not(:disabled) {
-                background-color: #FDBA74 !important;
+                background-color: #93C5FD !important;
                 color: white !important;
-                border-color: #FDBA74 !important;
+                border-color: #93C5FD !important;
             }
             .btn-action > button:not(:disabled):hover,
             div[data-testid="stButton"].btn-action > button:not(:disabled):hover {
-                background-color: #FB923C !important;
-                border-color: #FB923C !important;
+                background-color: #60A5FA !important;
+                border-color: #60A5FA !important;
             }
             /* Navigation buttons (Back) - gray */
             .btn-nav > button:not(:disabled),
@@ -114,24 +120,96 @@ def main() -> None:
                 background-color: #4B5563 !important;
                 border-color: #4B5563 !important;
             }
-            /* Download buttons - light orange */
+            /* Download buttons - light blue */
             .btn-download > button:not(:disabled),
             div[data-testid="stDownloadButton"].btn-download > button:not(:disabled),
             div[data-testid="stButton"].btn-download > button:not(:disabled) {
-                background-color: #FDBA74 !important;
+                background-color: #93C5FD !important;
                 color: white !important;
-                border-color: #FDBA74 !important;
+                border-color: #93C5FD !important;
             }
             .btn-download > button:not(:disabled):hover,
             div[data-testid="stDownloadButton"].btn-download > button:not(:disabled):hover,
             div[data-testid="stButton"].btn-download > button:not(:disabled):hover {
-                background-color: #FB923C !important;
-                border-color: #FB923C !important;
+                background-color: #60A5FA !important;
+                border-color: #60A5FA !important;
             }
         </style>
     """, unsafe_allow_html=True)
     
+    # Session state initialization (must happen before render_brand_header)
+    st.session_state.setdefault("processed_ready", False)
+    st.session_state.setdefault("datalake_token", None)
+    st.session_state.setdefault("tables", {})
+    st.session_state.setdefault("query_ready", False)
+    st.session_state.setdefault("query_df", None)
+    st.session_state.setdefault("query_submitted", False)
+    # Hyperparameters (mirrors `dice/stages/offline_pipeline_cli.py` CLI flags)
+    st.session_state.setdefault("hp_simhash_size", 32)
+    st.session_state.setdefault("hp_num_hashes_minhash", 128)
+    st.session_state.setdefault("hp_join_edge_threshold", 0.80)
+    st.session_state.setdefault("hp_semantic_type_similarity_threshold", 0.70)
+    # Default to longer paths so the demo naturally shows 4–5 node join paths.
+    st.session_state.setdefault("hp_simple_path_max_length", 6)
+    # Defaults for downstream screens (seeded from preprocessing hyperparameters)
+    st.session_state.setdefault("nav_min_edge_score", float(st.session_state.hp_join_edge_threshold))
+    st.session_state.setdefault("nav_max_hops", int(st.session_state.hp_simple_path_max_length))
+    st.session_state.setdefault("ret_min_edge_score", float(st.session_state.hp_join_edge_threshold))
+    st.session_state.setdefault("ret_max_hops", int(st.session_state.hp_simple_path_max_length))
+    st.session_state.setdefault("ret_top_k", 10)
+    # Phase 4: Query table selection state (used on Retrieved Join Paths page)
+    st.session_state.setdefault("selected_row", None)
+    st.session_state.setdefault("selected_column", None)
+    st.session_state.setdefault("page_idx", 1)
+    st.session_state.setdefault("preprocess_log", [])
+    
+    # Always keep a prepopulated query table available by default.
+    if st.session_state.query_df is None:
+        st.session_state.query_df = bundled_query()
+        st.session_state.query_ready = False
+        st.session_state.query_submitted = False
+    
     render_brand_header()
+    
+    # Handle preprocessing from header controls
+    preprocess_clicked = st.session_state.get("header_preprocess_clicked", False)
+    
+    if preprocess_clicked:
+        # Keep ordering aligned to `offline_pipeline_cli.py` routines (0..12),
+        # but only simulate the main milestones.
+        routine_steps = {
+            0: "Deleting processed data",
+            1: "Copying data lake",
+            2: "Sanitizing tables",
+            3: "Extracting semantic types",
+            4: "Computing table embeddings",
+            6: "Computing MinHash similarities",
+            7: "Computing semantic hashes",
+            8: "Computing diversity index",
+            9: "Computing semantic type similarities",
+            10: "Detecting numeric columns",
+            11: "Building join graph",
+            12: "Building join path index",
+        }
+        steps = [routine_steps[i] for i in range(0, 13) if i in routine_steps]
+        # simulate_preprocessing handles the spinner/status display internally
+        simulate_preprocessing(steps=steps, container=None)
+        
+        # Load bundled datalake (demo uses sample data)
+        tables = bundled_datalake()
+        tables = ensure_nonempty_tables(tables)
+        if not tables:
+            st.error("No tables found in the data lake.")
+            st.session_state.header_preprocess_clicked = False
+        else:
+            st.session_state.tables = tables
+            st.session_state.processed_ready = True
+            # Seed downstream defaults from preprocessing hyperparameters.
+            st.session_state.nav_min_edge_score = float(st.session_state.hp_join_edge_threshold)
+            st.session_state.nav_max_hops = int(st.session_state.hp_simple_path_max_length)
+            st.session_state.ret_min_edge_score = float(st.session_state.hp_join_edge_threshold)
+            st.session_state.ret_max_hops = int(st.session_state.hp_simple_path_max_length)
+            st.session_state.header_preprocess_clicked = False
     
     # Inject JavaScript via components.html to classify buttons by text content.
     # NOTE: `height=0` can still reserve vertical space in some Streamlit builds,
@@ -191,46 +269,13 @@ def main() -> None:
         height=1,
     )
 
-    # Session state initialization
-    st.session_state.setdefault("processed_ready", False)
-    st.session_state.setdefault("datalake_token", None)
-    st.session_state.setdefault("tables", {})
-    st.session_state.setdefault("query_ready", False)
-    st.session_state.setdefault("query_df", None)
-    st.session_state.setdefault("query_submitted", False)
-    # Hyperparameters (mirrors `dice/stages/offline_pipeline_cli.py` CLI flags)
-    st.session_state.setdefault("hp_simhash_size", 128)
-    st.session_state.setdefault("hp_num_hashes_minhash", 128)
-    st.session_state.setdefault("hp_join_edge_threshold", 0.10)
-    st.session_state.setdefault("hp_semantic_type_similarity_threshold", 0.70)
-    # Default to longer paths so the demo naturally shows 4–5 node join paths.
-    st.session_state.setdefault("hp_simple_path_max_length", 5)
-    # Defaults for downstream screens (seeded from preprocessing hyperparameters)
-    st.session_state.setdefault("nav_min_edge_score", float(st.session_state.hp_join_edge_threshold))
-    st.session_state.setdefault("nav_max_hops", int(st.session_state.hp_simple_path_max_length))
-    st.session_state.setdefault("ret_min_edge_score", float(st.session_state.hp_join_edge_threshold))
-    st.session_state.setdefault("ret_max_hops", int(st.session_state.hp_simple_path_max_length))
-    st.session_state.setdefault("ret_top_k", 10)
-    # Phase 4: Query table selection state (used on Retrieved Join Paths page)
-    st.session_state.setdefault("selected_row", None)
-    st.session_state.setdefault("selected_column", None)
-    st.session_state.setdefault("page_idx", 0)
-    st.session_state.setdefault("preprocess_log", [])
-
-    # Always keep a prepopulated query table available by default.
-    if st.session_state.query_df is None:
-        st.session_state.query_df = bundled_query()
-        st.session_state.query_ready = False
-        st.session_state.query_submitted = False
-
     page_idx = int(st.session_state.page_idx)
-    page_idx = max(0, min(3, page_idx))
+    # Skip page 0 (preprocessing page), start from page 1
+    page_idx = max(1, min(3, page_idx))
     st.session_state.page_idx = page_idx
 
-    # Route to the appropriate page
-    if page_idx == 0:
-        page_upload_preprocess.render()
-    elif page_idx == 1:
+    # Route to the appropriate page (page 0 removed, preprocessing is in header)
+    if page_idx == 1:
         page_navigate.render()
     elif page_idx == 2:
         page_query_input.render()

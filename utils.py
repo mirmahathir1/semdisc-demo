@@ -14,14 +14,24 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 
 @dataclass(frozen=True)
 class EdgeInfo:
     left: str
     right: str
+    # Join key column on the `left` table (or current node during traversal).
+    # Historically this was the only join-key field; keep the name `key` for compatibility.
     key: str
     score: float
+    # Join key column on the `right` table (neighbor node during traversal).
+    # For equi-joins this is the same as `key`.
+    right_key: Optional[str] = None
+    # Join type used for visualization / demo semantics.
+    # - "equi": same join-key column name on both sides (value overlap indicates FK-style join)
+    # - "semantic": join via semantic-type match even when column names differ
+    join_type: str = "equi"
 
 
 # Hardcoded semantic type annotations (demo-only).
@@ -75,6 +85,8 @@ SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
     ("shipments", "order_id"): "Order Identifier",
     ("shipments", "warehouse_id"): "Warehouse Identifier",
     ("shipments", "carrier_id"): "Carrier Identifier",
+    ("shipments", "carrier_name"): "Carrier Name",
+    ("shipments", "shipment_status"): "Shipment Status",
     ("shipments", "ship_date"): "Shipment Date",
     # carriers
     ("carriers", "carrier_id"): "Carrier Identifier",
@@ -84,6 +96,7 @@ SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
     ("payments", "order_id"): "Order Identifier",
     ("payments", "payment_method_id"): "Payment Method Identifier",
     ("payments", "amount"): "Payment Amount",
+    ("payments", "payment_currency"): "Currency Code",
     ("payments", "payment_date"): "Payment Date",
     # payment_methods
     ("payment_methods", "payment_method_id"): "Payment Method Identifier",
@@ -135,18 +148,131 @@ def best_join_key_and_score(left: pd.DataFrame, right: pd.DataFrame) -> Optional
     return best
 
 
+def _semantic_concept(stype: str) -> Optional[str]:
+    """Coarse semantic concept used to synthesize 'semantic joins' in the demo.
+
+    This is intentionally lightweight (string rules) so the demo does not require
+    an embedding model at runtime.
+    """
+    s = str(stype or "").strip().lower()
+    if not s:
+        return None
+
+    # NOTE: we intentionally do NOT generate semantic joins for identifier-like columns.
+    # IDs should join via equi-joins; semantic joins are reserved for descriptive attributes.
+
+    # Broad but safe concepts (overlap score still gates edges).
+    if "country" in s:
+        return "country"
+    if "city" in s:
+        return "city"
+    if "currency" in s:
+        return "currency"
+    if "status" in s:
+        return "status"
+    if "segment" in s:
+        return "segment"
+    if "amount" in s:
+        return "amount"
+    if "rating" in s:
+        return "rating"
+    if "price" in s:
+        return "price"
+    if "quantity" in s or "qty" in s:
+        return "quantity"
+    if "name" in s:
+        return "name"
+
+    return None
+
+
+def best_semantic_join_keys_and_score(
+    left_name: str,
+    left: pd.DataFrame,
+    right_name: str,
+    right: pd.DataFrame,
+) -> Optional[Tuple[str, str, float]]:
+    """Best 'semantic join' candidate between two tables.
+
+    A semantic join here means:
+    - columns do NOT have to share the same name
+    - but they must share a coarse semantic concept (from SEMANTIC_TYPES)
+    - and have overlapping values (Jaccard) to keep it realistic
+    """
+    best: Optional[Tuple[str, str, float]] = None  # (left_col, right_col, score)
+
+    left_cols = list(left.columns)
+    right_cols = list(right.columns)
+
+    for lc in left_cols:
+        st_l = SEMANTIC_TYPES.get((left_name, str(lc)))
+        if not st_l:
+            continue
+        c_l = _semantic_concept(st_l)
+        if not c_l:
+            continue
+
+        for rc in right_cols:
+            if str(lc) == str(rc):
+                # If the column name matches, treat it as an equi-join candidate instead.
+                continue
+            st_r = SEMANTIC_TYPES.get((right_name, str(rc)))
+            if not st_r:
+                continue
+            c_r = _semantic_concept(st_r)
+            if not c_r or c_r != c_l:
+                continue
+
+            lvals = (normalize_cell(v) for v in left[str(lc)].head(5000))
+            rvals = (normalize_cell(v) for v in right[str(rc)].head(5000))
+            score = jaccard(lvals, rvals)
+            if best is None or score > best[2]:
+                best = (str(lc), str(rc), float(score))
+
+    return best
+
+
 def build_join_graph(tables: Dict[str, pd.DataFrame], min_edge_score: float) -> Dict[str, List[EdgeInfo]]:
     graph: Dict[str, List[EdgeInfo]] = defaultdict(list)
     names = sorted(tables.keys())
     for a, b in itertools.combinations(names, 2):
-        best = best_join_key_and_score(tables[a], tables[b])
-        if best is None:
-            continue
-        key, score = best
-        if score < min_edge_score:
-            continue
-        graph[a].append(EdgeInfo(left=a, right=b, key=key, score=score))
-        graph[b].append(EdgeInfo(left=b, right=a, key=key, score=score))
+        # 1) Equi-join: same column name on both tables + overlapping values.
+        best_equi = best_join_key_and_score(tables[a], tables[b])
+        if best_equi is not None:
+            key, score = best_equi
+            if score >= min_edge_score:
+                graph[a].append(
+                    EdgeInfo(left=a, right=b, key=key, score=score, right_key=key, join_type="equi")
+                )
+                graph[b].append(
+                    EdgeInfo(left=b, right=a, key=key, score=score, right_key=key, join_type="equi")
+                )
+
+        # 2) Semantic join: different column names, but matching semantic concept + overlap.
+        best_sem = best_semantic_join_keys_and_score(a, tables[a], b, tables[b])
+        if best_sem is not None:
+            left_key, right_key, score = best_sem
+            if score >= min_edge_score:
+                graph[a].append(
+                    EdgeInfo(
+                        left=a,
+                        right=b,
+                        key=left_key,
+                        right_key=right_key,
+                        score=score,
+                        join_type="semantic",
+                    )
+                )
+                graph[b].append(
+                    EdgeInfo(
+                        left=b,
+                        right=a,
+                        key=right_key,
+                        right_key=left_key,
+                        score=score,
+                        join_type="semantic",
+                    )
+                )
     return graph
 
 
@@ -160,15 +286,39 @@ def attach_query_node(
     tables2["query"] = query
     g2: Dict[str, List[EdgeInfo]] = defaultdict(list, {k: list(v) for k, v in graph.items()})
 
+    # For demo simulation: create hardcoded connections from query to relevant tables
+    # This ensures join paths are always found regardless of column name matching
+    demo_connections = [
+        ("orders", "order_id", 0.95),
+        ("customers", "customer_id", 0.90),
+    ]
+    
+    for table_name, join_key, score in demo_connections:
+        if table_name in tables:
+            g2["query"].append(
+                EdgeInfo(left="query", right=table_name, key=join_key, right_key=join_key, score=score, join_type="equi")
+            )
+            g2[table_name].append(
+                EdgeInfo(left=table_name, right="query", key=join_key, right_key=join_key, score=score, join_type="equi")
+            )
+    
+    # Also try actual column matching as fallback
     for name, df in tables.items():
+        # Skip if already connected via demo connections
+        if any(name == conn[0] for conn in demo_connections):
+            continue
         best = best_join_key_and_score(query, df)
         if best is None:
             continue
         key, score = best
         if score < min_edge_score:
             continue
-        g2["query"].append(EdgeInfo(left="query", right=name, key=key, score=score))
-        g2[name].append(EdgeInfo(left=name, right="query", key=key, score=score))
+        g2["query"].append(
+            EdgeInfo(left="query", right=name, key=key, right_key=key, score=score, join_type="equi")
+        )
+        g2[name].append(
+            EdgeInfo(left=name, right="query", key=key, right_key=key, score=score, join_type="equi")
+        )
 
     return g2, tables2
 
@@ -203,7 +353,13 @@ def simple_paths_topk(
 
             # Small length bonus so multi-hop paths can appear in the top-k list.
             length_bonus = 1.0 + 0.12 * hop_count
-            adjusted = float(geom_mean * length_bonus)
+
+            # Prefer surfacing at least some semantic-join paths in the demo UI.
+            # Without this, equi-joins dominate due to higher overlap and stable tie-breaking.
+            semantic_edges = sum(1 for e in edges if getattr(e, "join_type", "equi") == "semantic")
+            semantic_bonus = 1.0 + 0.18 * float(semantic_edges)
+
+            adjusted = float(geom_mean * length_bonus * semantic_bonus)
             results.append((path, adjusted, edges))
 
         if len(path) - 1 >= max_hops:
@@ -325,12 +481,53 @@ def materialize_path(
     path_nodes: Sequence[str],
     path_edges: Sequence[EdgeInfo],
 ) -> pd.DataFrame:
+    # Demo semantic type to column name mapping
+    semantic_to_column = {
+        "Order Identifier": "order_id",
+        "Customer IDs": "customer_id", 
+        "Country Name": "country",
+    }
+    
     df = tables[path_nodes[0]].copy()
+    
+    # If starting from query, rename semantic type columns to match datalake columns
+    if path_nodes[0] == "query":
+        rename_map = {sem: col for sem, col in semantic_to_column.items() if sem in df.columns}
+        if rename_map:
+            df = df.rename(columns=rename_map)
+    
     for edge, next_node in zip(path_edges, path_nodes[1:]):
         # Joins are non-directional: merge with the next node regardless of edge direction
         right = tables[next_node]
-        key = edge.key
-        df = df.merge(right, how="left", on=key, suffixes=("", f"_{next_node}"))
+        left_on = str(edge.key)
+        right_on = str(edge.right_key) if edge.right_key is not None else str(edge.key)
+        
+        # Handle case where key might not exist in left df (semantic type mismatch)
+        if left_on not in df.columns:
+            # Try to find a matching column via semantic mapping
+            for sem, col in semantic_to_column.items():
+                if col == left_on and sem in tables[path_nodes[0]].columns:
+                    # The original query had this semantic type, use the mapped column
+                    pass
+            # If still no match, try cross join for demo purposes
+            if left_on not in df.columns:
+                df[left_on] = (
+                    right[right_on].iloc[0]
+                    if right_on in right.columns and len(right) > 0
+                    else ""
+                )
+
+        # If the right join key doesn't exist, fall back to left_on (equi-join case) if possible.
+        if right_on not in right.columns and left_on in right.columns:
+            right_on = left_on
+
+        df = df.merge(
+            right,
+            how="left",
+            left_on=left_on,
+            right_on=right_on,
+            suffixes=("", f"_{next_node}"),
+        )
     return df
 
 
@@ -360,18 +557,20 @@ def to_dot(
         # so we also reduce font size and internal margins.
         '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="7", margin="0.03,0.015", height="0.12", width="0.26"];',
         # Smaller edge label font so join-key labels don't dominate.
-        '  edge [color="#666666", fontname="Helvetica", fontsize="7"];',
+        '  edge [color="#666666", fontname="Helvetica", fontsize="9"];',
     ]
 
     for (u, v), e in sorted(undirected.items(), key=lambda kv: kv[0]):
         is_hl = (u, v) in highlight or (v, u) in highlight
-        color = "#d62728" if is_hl else "#666666"
+        jt = getattr(e, "join_type", "equi")
+        base_color = "#2563EB" if jt == "equi" else ("#F97316" if jt == "semantic" else "#666666")
+        color = "#d62728" if is_hl else base_color
         penwidth = "2.0" if is_hl else "0.9"
         
         # Get the join key column name from each table
         # Currently e.key is the common column name, but we show it for both tables
         left_join_key = e.key
-        right_join_key = e.key
+        right_join_key = e.right_key if e.right_key is not None else e.key
         
         # Show just the two join keys separated by comma
         label = f"{left_join_key}, {right_join_key}"
@@ -526,18 +725,18 @@ def bundled_datalake() -> Dict[str, pd.DataFrame]:
 
     shipments = pd.DataFrame(
         [
-            {"shipment_id": "S900", "order_id": "O100", "warehouse_id": "W1", "carrier_id": "CR1", "ship_date": "2025-12-11"},
-            {"shipment_id": "S901", "order_id": "O101", "warehouse_id": "W2", "carrier_id": "CR2", "ship_date": "2025-12-12"},
-            {"shipment_id": "S902", "order_id": "O102", "warehouse_id": "W1", "carrier_id": "CR3", "ship_date": "2025-12-21"},
-            {"shipment_id": "S903", "order_id": "O103", "warehouse_id": "W3", "carrier_id": "CR1", "ship_date": "2025-12-23"},
-            {"shipment_id": "S904", "order_id": "O104", "warehouse_id": "W3", "carrier_id": "CR2", "ship_date": "2025-12-24"},
-            {"shipment_id": "S905", "order_id": "O105", "warehouse_id": "W2", "carrier_id": "CR3", "ship_date": "2025-12-24"},
-            {"shipment_id": "S906", "order_id": "O106", "warehouse_id": "W1", "carrier_id": "CR2", "ship_date": "2025-12-27"},
-            {"shipment_id": "S907", "order_id": "O107", "warehouse_id": "W2", "carrier_id": "CR1", "ship_date": "2025-12-28"},
-            {"shipment_id": "S908", "order_id": "O108", "warehouse_id": "W1", "carrier_id": "CR3", "ship_date": "2025-12-29"},
-            {"shipment_id": "S909", "order_id": "O109", "warehouse_id": "W2", "carrier_id": "CR2", "ship_date": "2025-12-30"},
-            {"shipment_id": "S910", "order_id": "O110", "warehouse_id": "W3", "carrier_id": "CR1", "ship_date": "2025-12-31"},
-            {"shipment_id": "S911", "order_id": "O111", "warehouse_id": "W1", "carrier_id": "CR2", "ship_date": "2026-01-02"},
+            {"shipment_id": "S900", "order_id": "O100", "warehouse_id": "W1", "carrier_id": "CR1", "carrier_name": "DHL", "shipment_status": "Shipped", "ship_date": "2025-12-11"},
+            {"shipment_id": "S901", "order_id": "O101", "warehouse_id": "W2", "carrier_id": "CR2", "carrier_name": "UPS", "shipment_status": "Delivered", "ship_date": "2025-12-12"},
+            {"shipment_id": "S902", "order_id": "O102", "warehouse_id": "W1", "carrier_id": "CR3", "carrier_name": "FedEx", "shipment_status": "Delivered", "ship_date": "2025-12-21"},
+            {"shipment_id": "S903", "order_id": "O103", "warehouse_id": "W3", "carrier_id": "CR1", "carrier_name": "DHL", "shipment_status": "Shipped", "ship_date": "2025-12-23"},
+            {"shipment_id": "S904", "order_id": "O104", "warehouse_id": "W3", "carrier_id": "CR2", "carrier_name": "UPS", "shipment_status": "Processing", "ship_date": "2025-12-24"},
+            {"shipment_id": "S905", "order_id": "O105", "warehouse_id": "W2", "carrier_id": "CR3", "carrier_name": "FedEx", "shipment_status": "Cancelled", "ship_date": "2025-12-24"},
+            {"shipment_id": "S906", "order_id": "O106", "warehouse_id": "W1", "carrier_id": "CR2", "carrier_name": "UPS", "shipment_status": "Delivered", "ship_date": "2025-12-27"},
+            {"shipment_id": "S907", "order_id": "O107", "warehouse_id": "W2", "carrier_id": "CR1", "carrier_name": "DHL", "shipment_status": "Delivered", "ship_date": "2025-12-28"},
+            {"shipment_id": "S908", "order_id": "O108", "warehouse_id": "W1", "carrier_id": "CR3", "carrier_name": "FedEx", "shipment_status": "Shipped", "ship_date": "2025-12-29"},
+            {"shipment_id": "S909", "order_id": "O109", "warehouse_id": "W2", "carrier_id": "CR2", "carrier_name": "UPS", "shipment_status": "Processing", "ship_date": "2025-12-30"},
+            {"shipment_id": "S910", "order_id": "O110", "warehouse_id": "W3", "carrier_id": "CR1", "carrier_name": "DHL", "shipment_status": "Delivered", "ship_date": "2025-12-31"},
+            {"shipment_id": "S911", "order_id": "O111", "warehouse_id": "W1", "carrier_id": "CR2", "carrier_name": "UPS", "shipment_status": "Delivered", "ship_date": "2026-01-02"},
         ]
     )
 
@@ -551,18 +750,18 @@ def bundled_datalake() -> Dict[str, pd.DataFrame]:
 
     payments = pd.DataFrame(
         [
-            {"payment_id": "PAY900", "order_id": "O100", "payment_method_id": "PM1", "amount": 89.0, "payment_date": "2025-12-10"},
-            {"payment_id": "PAY901", "order_id": "O101", "payment_method_id": "PM2", "amount": 189.0, "payment_date": "2025-12-11"},
-            {"payment_id": "PAY902", "order_id": "O102", "payment_method_id": "PM1", "amount": 90.0, "payment_date": "2025-12-20"},
-            {"payment_id": "PAY903", "order_id": "O103", "payment_method_id": "PM3", "amount": 127.0, "payment_date": "2025-12-22"},
-            {"payment_id": "PAY904", "order_id": "O104", "payment_method_id": "PM1", "amount": 345.0, "payment_date": "2025-12-23"},
-            {"payment_id": "PAY905", "order_id": "O105", "payment_method_id": "PM2", "amount": 26.0, "payment_date": "2025-12-24"},
-            {"payment_id": "PAY906", "order_id": "O106", "payment_method_id": "PM1", "amount": 157.0, "payment_date": "2025-12-26"},
-            {"payment_id": "PAY907", "order_id": "O107", "payment_method_id": "PM2", "amount": 234.0, "payment_date": "2025-12-27"},
-            {"payment_id": "PAY908", "order_id": "O108", "payment_method_id": "PM3", "amount": 115.0, "payment_date": "2025-12-28"},
-            {"payment_id": "PAY909", "order_id": "O109", "payment_method_id": "PM1", "amount": 86.0, "payment_date": "2025-12-29"},
-            {"payment_id": "PAY910", "order_id": "O110", "payment_method_id": "PM2", "amount": 250.0, "payment_date": "2025-12-30"},
-            {"payment_id": "PAY911", "order_id": "O111", "payment_method_id": "PM1", "amount": 129.0, "payment_date": "2025-12-31"},
+            {"payment_id": "PAY900", "order_id": "O100", "payment_method_id": "PM1", "amount": 89.0, "payment_currency": "USD", "payment_date": "2025-12-10"},
+            {"payment_id": "PAY901", "order_id": "O101", "payment_method_id": "PM2", "amount": 189.0, "payment_currency": "SGD", "payment_date": "2025-12-11"},
+            {"payment_id": "PAY902", "order_id": "O102", "payment_method_id": "PM1", "amount": 90.0, "payment_currency": "USD", "payment_date": "2025-12-20"},
+            {"payment_id": "PAY903", "order_id": "O103", "payment_method_id": "PM3", "amount": 127.0, "payment_currency": "EUR", "payment_date": "2025-12-22"},
+            {"payment_id": "PAY904", "order_id": "O104", "payment_method_id": "PM1", "amount": 345.0, "payment_currency": "EUR", "payment_date": "2025-12-23"},
+            {"payment_id": "PAY905", "order_id": "O105", "payment_method_id": "PM2", "amount": 26.0, "payment_currency": "INR", "payment_date": "2025-12-24"},
+            {"payment_id": "PAY906", "order_id": "O106", "payment_method_id": "PM1", "amount": 157.0, "payment_currency": "BRL", "payment_date": "2025-12-26"},
+            {"payment_id": "PAY907", "order_id": "O107", "payment_method_id": "PM2", "amount": 234.0, "payment_currency": "SGD", "payment_date": "2025-12-27"},
+            {"payment_id": "PAY908", "order_id": "O108", "payment_method_id": "PM3", "amount": 115.0, "payment_currency": "USD", "payment_date": "2025-12-28"},
+            {"payment_id": "PAY909", "order_id": "O109", "payment_method_id": "PM1", "amount": 86.0, "payment_currency": "CNY", "payment_date": "2025-12-29"},
+            {"payment_id": "PAY910", "order_id": "O110", "payment_method_id": "PM2", "amount": 250.0, "payment_currency": "EUR", "payment_date": "2025-12-30"},
+            {"payment_id": "PAY911", "order_id": "O111", "payment_method_id": "PM1", "amount": 129.0, "payment_currency": "USD", "payment_date": "2025-12-31"},
         ]
     )
 
@@ -615,11 +814,11 @@ def bundled_datalake() -> Dict[str, pd.DataFrame]:
 def bundled_query() -> pd.DataFrame:
     return pd.DataFrame(
         [
-            {"order_id": "O100", "customer_id": "C001", "country": "US"},
-            {"order_id": "O101", "customer_id": "C002", "country": "SG"},
-            {"order_id": "O103", "customer_id": "C003", "country": "PL"},
-            {"order_id": "O104", "customer_id": "C004", "country": "DE"},
-            {"order_id": "O108", "customer_id": "C007", "country": "US"},
+            {"Order Identifier": "O100", "Customer IDs": "C001", "Country Name": "US"},
+            {"Order Identifier": "O101", "Customer IDs": "C002", "Country Name": "SG"},
+            {"Order Identifier": "O103", "Customer IDs": "C003", "Country Name": "PL"},
+            {"Order Identifier": "O104", "Customer IDs": "C004", "Country Name": "DE"},
+            {"Order Identifier": "O108", "Customer IDs": "C007", "Country Name": "US"},
         ]
     )
 
@@ -693,7 +892,9 @@ def drop_fully_blank_rows(df: pd.DataFrame) -> pd.DataFrame:
 def format_path(path: Sequence[str], edges: Sequence[EdgeInfo]) -> str:
     parts = [path[0]]
     for e, nxt in zip(edges, path[1:]):
-        parts.append(f"--[{e.key}, {e.score:.2f}]-- {nxt}")
+        rk = e.right_key if e.right_key is not None else e.key
+        jt = getattr(e, "join_type", "equi")
+        parts.append(f"--[{jt}:{e.key}→{rk}, {e.score:.2f}]-- {nxt}")
     return " ".join(parts)
 
 
@@ -707,8 +908,8 @@ def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optiona
         # Half the node height (min) + shrink padding/font a bit to match.
         '  node [shape="box", style="rounded,filled", fillcolor="#f7f7f7", color="#444444", fontname="Helvetica", fontsize="6", margin="0.02,0.010", height="0.06", width="0.22"];',
         # Smaller edge label font (about half default) for compact rendering.
-        # Half the edge-label font size.
-        '  edge [color="#d62728", fontname="Helvetica", fontsize="4", penwidth="1.4"];',
+        # Edge color is set per-edge (equi vs semantic).
+        '  edge [fontname="Helvetica", fontsize="5", penwidth="1.4"];',
     ]
     for n in nodes:
         lines.append(f'  "{n}";')
@@ -717,14 +918,17 @@ def path_to_dot(nodes: Sequence[str], edges: Sequence[EdgeInfo], tables: Optiona
         # Get the join key column name from each table
         # Currently e.key is the common column name, but we show it for both tables
         left_join_key = e.key
-        right_join_key = e.key
+        right_join_key = e.right_key if e.right_key is not None else e.key
         
         # Show just the two join keys separated by comma
         label = f"{left_join_key}, {right_join_key}"
+
+        jt = getattr(e, "join_type", "equi")
+        edge_color = "#2563EB" if jt == "equi" else ("#F97316" if jt == "semantic" else "#94A3B8")
         
         # Use undirected edge (--) instead of directed (->)
         current_node = nodes[i]
-        lines.append(f'  "{current_node}" -- "{nxt}" [label="{label}"];')
+        lines.append(f'  "{current_node}" -- "{nxt}" [label="{label}", color="{edge_color}"];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -771,7 +975,7 @@ def path_to_dot_highlighted(
         '  graph [rankdir="LR", bgcolor="white", ranksep="0.07", nodesep="0.05"];',
         # Smaller edge label font (about half default) for compact rendering.
         # Half the edge-label font size.
-        f'  edge [color="{edge_color}", fontname="Helvetica", fontsize="4", penwidth="1.4"];',
+        f'  edge [color="{edge_color}", fontname="Helvetica", fontsize="5", penwidth="1.4"];',
     ]
     
     for n in nodes:
@@ -793,7 +997,7 @@ def path_to_dot_highlighted(
     
     for i, (e, nxt) in enumerate(zip(edges, nodes[1:])):
         left_join_key = e.key
-        right_join_key = e.key
+        right_join_key = e.right_key if e.right_key is not None else e.key
         label = f"{left_join_key}, {right_join_key}"
         current_node = nodes[i]
         lines.append(f'  "{current_node}" -- "{nxt}" [label="{label}"];')
@@ -809,8 +1013,6 @@ def render_graphviz_fixed_height(dot: str, *, height_px: int = 220) -> None:
     to the container width, which can shrink nodes when paths get long. This renderer
     keeps a fixed height and allows the graph to grow left-to-right.
     """
-    import streamlit.components.v1 as components
-
     # Stable DOM id for this DOT string (avoid collisions inside an iframe).
     dom_id = f"sd-gv-{token_for_bytes(dot.encode('utf-8', errors='ignore'))[:12]}"
     dot_json = json.dumps(dot)
@@ -899,15 +1101,11 @@ def simulate_preprocessing(
     scope = container.container() if container is not None else nullcontext()
     with scope:
         progress = st.progress(0, text="Preprocessing...")
-        with st.status("Preprocessing", expanded=True) as status:
-            for i, step in enumerate(steps, start=1):
-                with st.spinner(step):
-                    time.sleep(seconds_per_step)
-                line = f"✓ {step}"
-                st.session_state[log_key].append(line)
-                status.write(line)
-                progress.progress(int(100 * i / max(len(steps), 1)), text="Preprocessing...")
-            status.update(label="Preprocessing complete", state="complete", expanded=False)
+        for i, step in enumerate(steps, start=1):
+            time.sleep(seconds_per_step)
+            line = f"✓ {step}"
+            st.session_state[log_key].append(line)
+            progress.progress(int(100 * i / max(len(steps), 1)), text=f"Preprocessing: {step}")
         progress.empty()
 
 
@@ -928,20 +1126,156 @@ def render_brand_header() -> None:
 </svg>
 """.strip()
 
-    c1, c2 = st.columns([0.12, 0.88], vertical_alignment="center")
-    with c1:
-        st.markdown(svg, unsafe_allow_html=True)
-    with c2:
+    # Header with logo/title on left (1/8), preprocessing controls on right (7/8)
+    header_col, controls_col = st.columns([1, 7], vertical_alignment="center")
+    
+    with header_col:
+        # Combine logo and title in a compact layout
         st.markdown(
-            "<div style='font-size:24px; font-weight:750; line-height:1.05;'>SemDisc</div>",
+            f"""
+            <div style="display: flex; align-items: center; gap: 8px;">
+                {svg}
+                <div>
+                    <div style="font-size:20px; font-weight:750; line-height:1.05;">SemDisc</div>
+                </div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
-        st.markdown(
-            "<div style='font-size:0.85rem; color:#6B7280; margin-top:2px;'>"
-            "Semantic discovery of joinable tables and join paths."
-            "</div>",
-            unsafe_allow_html=True,
-        )
+    
+    with controls_col:
+        # Preprocessing controls in a single row:
+        # [Upload CSV] [SimHash] [Join edge] [MinHash] [Semantic type] [Path length] [Preprocess]
+        ctrl_cols = st.columns([1, 1, 1, 1, 1, 1, 1])
+        
+        with ctrl_cols[0]:
+            # Custom file upload button using HTML/JS - blue and rounded
+            components.html(
+                """
+                <style>
+                    html, body {
+                        margin: 0;
+                        padding: 0;
+                        overflow: hidden;
+                    }
+                    .upload-btn {
+                        background-color: #2563EB;
+                        color: white;
+                        border: 1px solid #2563EB;
+                        padding: 0.5rem 0.75rem;
+                        border-radius: 0.5rem;
+                        cursor: pointer;
+                        font-size: 0.8rem;
+                        font-weight: 500;
+                        width: 100%;
+                        white-space: nowrap;
+                        box-sizing: border-box;
+                    }
+                    .upload-btn:hover {
+                        background-color: #1D4ED8;
+                        border-color: #1D4ED8;
+                    }
+                    .upload-btn.has-files {
+                        background-color: #059669;
+                        border-color: #059669;
+                    }
+                    .upload-btn.has-files:hover {
+                        background-color: #047857;
+                        border-color: #047857;
+                    }
+                    #csv-file-input {
+                        display: none;
+                    }
+                </style>
+                <input type="file" id="csv-file-input" accept=".csv" multiple />
+                <button class="upload-btn" id="upload-btn" onclick="document.getElementById('csv-file-input').click()">
+                    📁 Upload CSV
+                </button>
+                <script>
+                    const fileInput = document.getElementById('csv-file-input');
+                    const uploadBtn = document.getElementById('upload-btn');
+                    
+                    fileInput.addEventListener('change', function(e) {
+                        const files = e.target.files;
+                        if (files && files.length > 0) {
+                            uploadBtn.textContent = '📁 ' + files.length + ' file(s)';
+                            uploadBtn.classList.add('has-files');
+                            // Store file count in parent window for Streamlit to access
+                            window.parent.postMessage({type: 'csv_files_selected', count: files.length}, '*');
+                            // Set a flag in session storage that Streamlit can check
+                            try {
+                                window.parent.sessionStorage.setItem('csv_files_uploaded', 'true');
+                            } catch(e) {}
+                        }
+                    });
+                </script>
+                """,
+                height=42,
+            )
+            # Track if files were uploaded (for enabling preprocess button)
+            st.session_state.setdefault("header_files_uploaded", False)
+        
+        with ctrl_cols[1]:
+            st.session_state.hp_simhash_size = st.slider(
+                "SimHash size",
+                min_value=32,
+                max_value=512,
+                value=int(st.session_state.hp_simhash_size),
+                step=32,
+                key="header_simhash_size",
+            )
+        
+        with ctrl_cols[2]:
+            st.session_state.hp_join_edge_threshold = st.slider(
+                "Join threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.hp_join_edge_threshold),
+                step=0.01,
+                key="header_join_edge_threshold",
+            )
+        
+        with ctrl_cols[3]:
+            st.session_state.hp_num_hashes_minhash = st.slider(
+                "MinHash hashes",
+                min_value=16,
+                max_value=512,
+                value=int(st.session_state.hp_num_hashes_minhash),
+                step=16,
+                key="header_num_hashes_minhash",
+            )
+        
+        with ctrl_cols[4]:
+            st.session_state.hp_semantic_type_similarity_threshold = st.slider(
+                "Semantic sim.",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(st.session_state.hp_semantic_type_similarity_threshold),
+                step=0.01,
+                key="header_semantic_type_similarity_threshold",
+            )
+        
+        with ctrl_cols[5]:
+            st.session_state.hp_simple_path_max_length = st.slider(
+                "Max path length",
+                min_value=1,
+                max_value=10,
+                value=int(st.session_state.hp_simple_path_max_length),
+                step=1,
+                key="header_simple_path_max_length",
+            )
+        
+        with ctrl_cols[6]:
+            preprocess_clicked = st.button(
+                "⚙️ Preprocess",
+                use_container_width=True,
+                key="header_preprocess_button",
+            )
+        
+        # Store button state in session state for processing in app.py
+        st.session_state.header_uploaded_files = True  # Always enable since we use custom uploader
+        st.session_state.header_preprocess_clicked = preprocess_clicked
+        st.session_state.header_reset_clicked = False
 
 
 def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
@@ -955,12 +1289,12 @@ def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
 <style>
   .sd-progress-wrap { margin: 0.75rem 0 1.0rem 0; }
   .sd-bar { height: 10px; border-radius: 999px; background: #E5E7EB; overflow: hidden; margin-top: 0px; }
-  .sd-bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #F97316 0%, #C4B5FD 60%, #F97316 100%); border-radius: 999px; }
+  .sd-bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #2563EB 0%, #C4B5FD 60%, #2563EB 100%); border-radius: 999px; }
   .sd-hstepper { display: grid; grid-template-columns: repeat(var(--sd-n), 1fr); gap: 10px; margin-top: 12px; }
   .sd-hstep { display:flex; flex-direction:column; align-items:center; gap: 6px; text-align:center; }
   .sd-dot { width: 14px; height: 14px; border-radius: 999px; border: 2px solid #9CA3AF; background: #ffffff; box-sizing: border-box; }
-  .sd-dot.done { background: #F97316; border-color: #EA580C; }
-  .sd-dot.current { background: #F97316; border-color: #EA580C; box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.20); }
+  .sd-dot.done { background: #2563EB; border-color: #1D4ED8; }
+  .sd-dot.current { background: #2563EB; border-color: #1D4ED8; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.20); }
   .sd-dot.todo { background: #F5F3FF; border-color: #C4B5FD; }
   .sd-step-label { font-size: 0.86rem; line-height: 1.15; color: #4B5563; }
   .sd-step-label.current { color: #111827; font-weight: 750; }
@@ -993,6 +1327,7 @@ def render_stage_stepper(current_idx: int, stage_labels: Sequence[str]) -> None:
 
 
 def goto_stage(idx: int) -> None:
-    st.session_state.page_idx = int(max(0, min(3, idx)))
+    # Page 0 (preprocessing) is removed, start from page 1
+    st.session_state.page_idx = int(max(1, min(3, idx)))
     st.rerun()
 
