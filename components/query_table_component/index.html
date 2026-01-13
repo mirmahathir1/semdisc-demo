@@ -10,13 +10,14 @@
     .qt-table th, .qt-table td { border:1px solid #e5e7eb; padding:6px 8px; font-size:0.75rem; }
     .qt-table th { background:#f3f4f6; color:#374151; font-weight:700; text-align:left; cursor:pointer; user-select:none; }
     .qt-table th:hover { background:#e5e7eb; }
-    .qt-table th.sel-col { background:rgba(34,197,94,0.45); color:#064E3B; }
+    /* Selected column (match retrieved-paths "selected column match" green) */
+    .qt-table th.sel-col { background:rgba(110,231,183,0.80); color:#064E3B; border-color:#047857; }
     .qt-table td.row-hdr { background:#f3f4f6; color:#374151; font-weight:600; text-align:center; cursor:pointer; user-select:none; }
     .qt-table td.row-hdr:hover { background:#e5e7eb; }
     .qt-table td.sel-row-hdr { background:rgba(59,130,246,0.35); color:#1e40af; font-weight:700; }
     .qt-table td.sel-row { background:rgba(59,130,246,0.18); }
-    .qt-table td.sel-col { background:rgba(34,197,94,0.15); }
-    .qt-table td.sel-both { background:rgba(34,197,94,0.28); }
+    .qt-table td.sel-col { background:rgba(110,231,183,0.22); }
+    .qt-table td.sel-both { background:rgba(110,231,183,0.35); }
     .loading { padding: 20px; color: #6b7280; }
 </style>
 </head>

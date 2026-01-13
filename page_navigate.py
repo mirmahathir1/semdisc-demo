@@ -242,6 +242,21 @@ def render() -> None:
     left, right = st.columns([0.20, 0.80], gap="small")
 
     with left:
+        st.markdown(
+            """
+<div style="margin: 2px 0 10px 0; padding: 8px 10px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+  <span style="display:flex; align-items:center; gap:6px;">
+    <span style="width:20px; height:0; border-top:3px solid #2563EB; display:inline-block;"></span>
+    <span style="color:#475569; font-size:0.88rem;">Equi-join</span>
+  </span>
+  <span style="display:flex; align-items:center; gap:6px;">
+    <span style="width:20px; height:0; border-top:3px solid #F97316; display:inline-block;"></span>
+    <span style="color:#475569; font-size:0.88rem;">Semantic join</span>
+  </span>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
         sel0 = st.session_state.get("nav_selected_heatmap_cell", {}) or {}
         selected_best_path_key = (
             str(sel0.get("best_path_key"))
@@ -297,22 +312,6 @@ def render() -> None:
 
 
     with right:
-        st.markdown(
-            """
-<div style="margin: 2px 0 10px 0; padding: 8px 12px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-  <span style="font-weight: 700; color: #334155; font-size: 0.92rem;">Edge type:</span>
-  <span style="display:flex; align-items:center; gap:8px;">
-    <span style="width:22px; height:0; border-top:3px solid #2563EB; display:inline-block;"></span>
-    <span style="color:#475569; font-size:0.90rem;">Equi-join</span>
-  </span>
-  <span style="display:flex; align-items:center; gap:8px;">
-    <span style="width:22px; height:0; border-top:3px solid #F97316; display:inline-block;"></span>
-    <span style="color:#475569; font-size:0.90rem;">Semantic join</span>
-  </span>
-</div>
-            """,
-            unsafe_allow_html=True,
-        )
         if not path_keys:
             st.info("Click a heatmap cell to view join paths.")
         else:
@@ -340,7 +339,7 @@ def render() -> None:
                     if num_cols > max_visible:
                         visible_attrs = "".join([f"<span class='attr-badge'>{a}</span>" for a in attributes[:max_visible]])
                         hidden_attrs = "".join([f"<span class='attr-badge'>{a}</span>" for a in attributes[max_visible:]])
-                        attributes_list = f'{visible_attrs}<span class="hidden-attrs" style="display:none;">{hidden_attrs}</span><button class="show-all-btn" onclick="this.previousElementSibling.style.display=\'inline\';this.style.display=\'none\';">+{num_cols - max_visible} more</button>'
+                        attributes_list = f'{visible_attrs}<span class="hidden-attrs" style="display:none;">{hidden_attrs}</span><span class="attr-badge show-all-btn" role="button" tabindex="0" onclick="this.previousElementSibling.style.display=\'inline\';this.style.display=\'none\';">+{num_cols - max_visible} more</span>'
                     else:
                         attributes_list = "".join([f"<span class='attr-badge'>{a}</span>" for a in attributes]) if num_cols > 0 else ""
                     dot_source = path_to_dot(nodes, edges, tables=tables)
@@ -489,18 +488,8 @@ def render() -> None:
                                     font-weight: 600;
                                 }}
                                 .show-all-btn {{
-                                    background: #F97316;
-                                    color: white;
-                                    border: none;
-                                    padding: 3px 8px;
-                                    border-radius: 6px;
-                                    font-size: 0.70rem;
-                                    font-weight: 600;
                                     cursor: pointer;
-                                    margin-left: 2px;
-                                }}
-                                .show-all-btn:hover {{
-                                    background: #EA580C;
+                                    user-select: none;
                                 }}
                                 .sd-unified-right {{
                                     display: block;

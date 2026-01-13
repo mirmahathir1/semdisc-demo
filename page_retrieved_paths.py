@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 import os
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 from components.heatmap import HeatmapCell, bin_index, compute_bins, render_joinpath_heatmap
 
@@ -28,18 +28,35 @@ def get_tables_with_column_value(
     tables: Dict[str, pd.DataFrame],
     column_name: str,
     query_df: pd.DataFrame,
-    selected_row: int,
+    selected_row: Optional[int],
+    *,
+    restrict_to_path_nodes: Optional[Sequence[str]] = None,
 ) -> Set[str]:
     """Find tables that contain a column matching the query column's value.
     
-    Returns set of table names where the column exists and contains
-    the value from the selected row.
+    For the demo, many datalake tables may contain the same identifier value
+    (e.g., `order_id` exists in multiple tables). To keep the UI readable, when
+    a query column is selected we highlight **at most one** table:
+
+    - If `restrict_to_path_nodes` is provided, we pick the first matching table
+      along that specific join path (deterministic, and guarantees <= 1 green node
+      per rendered join-path card).
+    - Otherwise, we pick a single "preferred" table for known query semantics, and
+      fall back to a deterministic choice.
     """
     # Semantic type to column name mapping for demo
     semantic_to_column = {
         "Order Identifier": "order_id",
         "Customer IDs": "customer_id",
         "Country Name": "country",
+    }
+
+    # Preferred table to highlight for common query semantics (demo-only).
+    # This keeps highlighting stable even when the same value exists in many tables.
+    preferred_table_for_query_column = {
+        "Order Identifier": "orders",
+        "Customer IDs": "customers",
+        "Country Name": "customers",
     }
     
     matching_tables = set()
@@ -70,8 +87,45 @@ def get_tables_with_column_value(
                 if query_value in col_values.values:
                     matching_tables.add(table_name)
                     break
-    
-    return matching_tables
+
+    if not matching_tables:
+        return set()
+
+    # If we're rendering a specific join path, restrict to tables on that path
+    # and pick the first match along the path (so only one node becomes green).
+    if restrict_to_path_nodes:
+        preferred = preferred_table_for_query_column.get(column_name)
+        if preferred and preferred in restrict_to_path_nodes and preferred in matching_tables:
+            return {preferred}
+        for t in restrict_to_path_nodes:
+            if t in matching_tables:
+                return {t}
+        # If none of the matches are on the path, don't highlight anything for this card.
+        return set()
+
+    # Otherwise pick a single stable table globally.
+    preferred = preferred_table_for_query_column.get(column_name)
+    if preferred in matching_tables:
+        return {preferred}
+
+    # Deterministic fallback: choose the table where the value appears most frequently
+    # in the matched column (ties broken by table name).
+    best_table: Optional[str] = None
+    best_count: int = -1
+    for table_name in sorted(matching_tables):
+        df = tables.get(table_name)
+        if df is None or df.empty:
+            continue
+        # Prefer counting on the "actual" column if present.
+        col_to_use = actual_column if actual_column in df.columns else column_name
+        if col_to_use not in df.columns:
+            continue
+        cnt = int((df[col_to_use].astype(str).str.strip() == query_value).sum())
+        if cnt > best_count:
+            best_table = table_name
+            best_count = cnt
+
+    return {best_table} if best_table else {sorted(matching_tables)[0]}
 
 
 def check_row_match(
@@ -117,7 +171,10 @@ def generate_path_dot_white_nodes(
     nodes: List[str],
     edges: List[EdgeInfo],
     tables: Dict[str, pd.DataFrame],
+    # highlight_green_nodes: selected-column match (original behavior)
     highlight_green_nodes: Set[str] = None,
+    # highlight_lime_nodes: any query-column match (union across query columns)
+    highlight_lime_nodes: Set[str] = None,
     match_score: int = 0,
 ) -> str:
     """Generate DOT source for a join path with white default nodes.
@@ -127,9 +184,11 @@ def generate_path_dot_white_nodes(
         edges: List of edge info for joins
         tables: Dictionary of table dataframes
         highlight_green_nodes: Set of node names to highlight in green (column match)
+        highlight_lime_nodes: Set of node names to highlight in lime (any query-column match)
         match_score: 0-100 indicating how well the row matches (affects node opacity)
     """
     highlight_green_nodes = highlight_green_nodes or set()
+    highlight_lime_nodes = highlight_lime_nodes or set()
     
     # Use undirected graph (no arrows)
     lines = [
@@ -150,9 +209,15 @@ def generate_path_dot_white_nodes(
         
         # Determine node color
         if node in highlight_green_nodes:
-            fill_color = "#D1FAE5"
-            border_color = "#059669"
-            font_color = "#065F46"
+            # Original selected-column match (green)
+            fill_color = "#6EE7B7"   # emerald-300 (darker than before)
+            border_color = "#047857" # emerald-700
+            font_color = "#064E3B"   # emerald-900
+        elif node in highlight_lime_nodes:
+            # Light lime green (query-column match)
+            fill_color = "#D9F99D"   # lime-200
+            border_color = "#65A30D" # lime-600
+            font_color = "#365314"   # lime-900
         elif node == "query":
             fill_color = "#DBEAFE"
             border_color = "#3B82F6"
@@ -446,7 +511,6 @@ def render() -> None:
         # Highlighting legend (horizontal)
         st.markdown("""
         <div style="margin-bottom: 12px; padding: 10px 14px; background: #F8FAFC; border-radius: 8px; border: 1px solid #E2E8F0; display: flex; align-items: center; gap: 18px; flex-wrap: wrap;">
-            <span style="font-weight: 600; color: #334155; font-size: 1.05em;">Highlighting:</span>
             <div style="display: flex; align-items: center; gap: 6px;">
                 <div style="width: 14px; height: 14px; background: #DBEAFE; border: 2px solid #2563EB; border-radius: 2px;"></div>
                 <span style="color: #475569; font-size: 1em;">Full tuple match</span>
@@ -456,8 +520,21 @@ def render() -> None:
                 <span style="color: #475569; font-size: 1em;">Partial tuple match</span>
             </div>
             <div style="display: flex; align-items: center; gap: 6px;">
-                <div style="width: 14px; height: 14px; background: #D1FAE5; border: 2px solid #059669; border-radius: 2px;"></div>
-                <span style="color: #475569; font-size: 1em;">Column match</span>
+                <div style="width: 14px; height: 14px; background: #6EE7B7; border: 2px solid #047857; border-radius: 2px;"></div>
+                <span style="color: #475569; font-size: 1em;">Selected column match</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <div style="width: 14px; height: 14px; background: #D9F99D; border: 2px solid #65A30D; border-radius: 2px;"></div>
+                <span style="color: #475569; font-size: 1em;">Candidate Tables</span>
+            </div>
+            <span style="margin-left: 6px; font-weight: 600; color: #334155; font-size: 1.05em;">Edge type:</span>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="width:22px; height:0; border-top:3px solid #2563EB; display:inline-block;"></span>
+                <span style="color:#475569; font-size:1em;">Equi-join</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="width:22px; height:0; border-top:3px solid #F97316; display:inline-block;"></span>
+                <span style="color:#475569; font-size:1em;">Semantic join</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -517,11 +594,28 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
                     attributes = []
 
                 # Determine highlighting based on query table selection
-                green_nodes = set()
+                # 1) Selected column match (original single-column highlight behavior)
+                green_nodes: Set[str] = set()
                 if selected_column is not None and selected_column in query_df.columns:
                     green_nodes = get_tables_with_column_value(
-                        tables_with_query, selected_column, query_df, selected_row
+                        tables_with_query,
+                        str(selected_column),
+                        query_df,
+                        selected_row,
+                        restrict_to_path_nodes=display_nodes,
                     )
+
+                # 2) Any query-column match (union across all query columns)
+                lime_nodes: Set[str] = set()
+                if selected_row is not None and selected_row >= 0 and len(query_df.columns) > 0:
+                    for qc in list(query_df.columns):
+                        lime_nodes |= get_tables_with_column_value(
+                            tables_with_query,
+                            str(qc),
+                            query_df,
+                            selected_row,
+                            restrict_to_path_nodes=display_nodes,
+                        )
 
                 is_full_match = False
                 match_score = 0
@@ -556,7 +650,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
                 if num_cols > max_visible:
                     visible_attrs = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes[:max_visible]])
                     hidden_attrs = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes[max_visible:]])
-                    attributes_list = f'{visible_attrs}<span class="hidden-attrs" style="display:none;">{hidden_attrs}</span><button class="show-all-btn" onclick="this.previousElementSibling.style.display=\'inline\';this.style.display=\'none\';">+{num_cols - max_visible} more</button>'
+                    attributes_list = f'{visible_attrs}<span class="hidden-attrs" style="display:none;">{hidden_attrs}</span><span class="attr-badge show-all-btn" role="button" tabindex="0" onclick="this.previousElementSibling.style.display=\'inline\';this.style.display=\'none\';">+{num_cols - max_visible} more</span>'
                 else:
                     attributes_list = "".join([f"<span class='attr-badge'>{html.escape(str(a))}</span>" for a in attributes]) if num_cols > 0 else ""
                 
@@ -564,6 +658,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
                 dot_source = generate_path_dot_white_nodes(
                     display_nodes, display_edges, tables=tables_with_query,
                     highlight_green_nodes=green_nodes,
+                    highlight_lime_nodes=lime_nodes,
                     match_score=match_score,
                 )
                 dot_json = json.dumps(dot_source)
@@ -721,18 +816,8 @@ div[data-testid="stVerticalBlock"] > div { gap: 0 !important; }
                             font-weight: 600;
                         }}
                         .show-all-btn {{
-                            background: #F97316;
-                            color: white;
-                            border: none;
-                            padding: 3px 8px;
-                            border-radius: 6px;
-                            font-size: 0.70rem;
-                            font-weight: 600;
                             cursor: pointer;
-                            margin-left: 2px;
-                        }}
-                        .show-all-btn:hover {{
-                            background: #EA580C;
+                            user-select: none;
                         }}
                         .sd-unified-right {{
                             display: block;
