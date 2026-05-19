@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import PathList from './PathList.vue'
 
 describe('PathList', () => {
-  it('marks paths with partial query tuple coverage in yellow', () => {
+  it('marks paths with complete query tuple coverage in blue and partial coverage in yellow', () => {
     const wrapper = mount(PathList, {
       props: {
         paths: [
@@ -37,8 +37,9 @@ describe('PathList', () => {
 
     const rows = wrapper.findAll('.path-row')
 
+    expect(rows[0].classes()).toContain('all-tuples')
     expect(rows[0].classes()).not.toContain('some-tuples')
-    expect(rows[0].text()).not.toContain('all 4/4 query tuples')
+    expect(rows[0].text()).toContain('all 4/4 query tuples')
     expect(rows[1].classes()).toContain('some-tuples')
     expect(rows[1].text()).toContain('some 3/4 query tuples')
   })

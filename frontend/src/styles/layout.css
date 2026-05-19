@@ -12,19 +12,6 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.brand-mark {
-  width: 42px;
-  height: 42px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 8px;
-  background: #2563eb;
-  color: #fff;
-  font-size: 1.35rem;
-  font-weight: 900;
 }
 
 .brand h1 {
@@ -375,6 +362,11 @@ td input {
   margin-bottom: 8px;
 }
 
+.query-select {
+  max-width: 240px;
+  margin-bottom: 12px;
+}
+
 .semantic-th-input {
   min-width: 130px;
   font-weight: 800;
@@ -573,6 +565,21 @@ td input {
   border-radius: 0;
 }
 
+.retrieved-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .graph-legend {
   display: flex;
   align-items: center;
@@ -590,6 +597,13 @@ td input {
   gap: 7px;
 }
 
+.retrieved-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
 .edge-swatch {
   width: 26px;
   height: 0;
@@ -599,6 +613,38 @@ td input {
 
 .edge-swatch-semantic {
   border-top-color: #f97316;
+}
+
+.legend-chip {
+  width: 24px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid #dbe3ee;
+  display: inline-block;
+}
+
+.legend-chip-all {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.legend-chip-some {
+  border-color: #eab308;
+  background: #fffbeb;
+}
+
+.legend-node {
+  width: 24px;
+  height: 14px;
+  border-radius: 4px;
+  border: 2px solid #86efac;
+  background: #f0fdf4;
+  display: inline-block;
+}
+
+.legend-node-selected {
+  border-color: #16a34a;
+  background: #dcfce7;
 }
 
 .node-label {
@@ -645,9 +691,19 @@ td input {
   background: #fffbeb;
 }
 
+.path-row.all-tuples {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
 .path-row.some-tuples.selected {
   outline: 2px solid #2563eb;
   background: #fef3c7;
+}
+
+.path-row.all-tuples.selected {
+  outline: 2px solid #1d4ed8;
+  background: #dbeafe;
 }
 
 .path-row.contains-selected-query-row {
@@ -663,6 +719,17 @@ td input {
 .path-row.some-tuples.contains-selected-query-row {
   border-color: #16a34a;
   background: #dcfce7;
+}
+
+.path-row.all-tuples.contains-selected-query-row {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: inset 4px 0 0 #16a34a;
+}
+
+.path-row.all-tuples.contains-selected-query-row.selected {
+  outline: 2px solid #1d4ed8;
+  background: #dbeafe;
 }
 
 .path-row span {
@@ -701,6 +768,12 @@ td input {
   font-style: normal;
   font-size: 0.74rem;
   font-weight: 900;
+}
+
+.path-row.all-tuples .tuple-chip {
+  border-color: #bfdbfe;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .edge-chip {

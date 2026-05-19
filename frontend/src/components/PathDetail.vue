@@ -4,9 +4,17 @@ import JoinGraph from './JoinGraph.vue'
 defineProps({
   path: Object,
   busy: Boolean,
+  graphEdges: {
+    type: Array,
+    default: () => []
+  },
   highlightColumn: {
     type: String,
     default: null
+  },
+  queryColumns: {
+    type: Array,
+    default: () => []
   },
   tableColumns: {
     type: Object,
@@ -30,9 +38,12 @@ const emit = defineEmits(['materialize'])
     </div>
     <JoinGraph
       :path="path"
+      :graph-edges="graphEdges"
       title="Path Graph"
       default-open
+      :show-legend="false"
       :highlight-column="highlightColumn"
+      :query-columns="queryColumns"
       :table-columns="tableColumns"
     />
     <div class="attribute-strip">

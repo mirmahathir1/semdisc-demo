@@ -60,10 +60,10 @@ def _bundled_query_cached(name: str | None = None) -> pd.DataFrame:
         return pd.read_csv(query_path)
     return pd.DataFrame(
         [
-            {"order_id": "O100", "customer_id": "C001", "country": "US"},
-            {"order_id": "O101", "customer_id": "C002", "country": "SG"},
-            {"order_id": "O102", "customer_id": "C001", "country": "US"},
-            {"order_id": "O103", "customer_id": "C003", "country": "PL"},
+            {"Order ID": "O100", "Customer ID": "C001", "country": "US"},
+            {"Order ID": "O101", "Customer ID": "C002", "country": "SG"},
+            {"Order ID": "O102", "Customer ID": "C001", "country": "US"},
+            {"Order ID": "O103", "Customer ID": "C003", "country": "PL"},
         ]
     )
 

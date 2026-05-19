@@ -8,6 +8,36 @@ def test_health_endpoint(client):
     assert response.get_json()["status"] == "ok"
 
 
+def test_orders_demo_query_uses_display_column_labels(client):
+    query = client.get("/api/demo/query?datalake=orders").get_json()["query"]
+
+    assert query["columns"][:2] == ["Order ID", "Customer ID"]
+    assert {"Order ID", "Customer ID"}.issubset(query["rows"][0])
+
+
+def test_display_query_column_labels_map_to_data_lake_columns(client):
+    dataset_id = client.get("/api/datalakes/orders").get_json()["datasetId"]
+    client.post(
+        "/api/preprocess",
+        json={"datasetId": dataset_id, "hyperparameters": {"joinEdgeThreshold": 0.1}},
+    )
+    query = client.get("/api/demo/query?datalake=orders").get_json()["query"]
+    query = {
+        "columns": ["Order ID", "Customer ID"],
+        "rows": [
+            {"Order ID": row["Order ID"], "Customer ID": row["Customer ID"]}
+            for row in query["rows"]
+        ],
+    }
+
+    submit = client.post("/api/query", json={"datasetId": dataset_id, "query": query})
+    query_id = submit.get_json()["queryId"]
+    paths = client.get(f"/api/query/{query_id}/paths?k=5&maxHops=4").get_json()["paths"]
+
+    assert paths
+    assert any(path["matchedQueryTupleCount"] > 0 for path in paths)
+
+
 def test_demo_preprocess_graph_query_and_materialize_workflow(client):
     options = client.get("/api/datalakes")
     assert "orders" in options.get_json()["datalakes"]
@@ -64,7 +94,8 @@ def test_demo_preprocess_graph_query_and_materialize_workflow(client):
     assert materialized.get_json()["data"]["rows"]
 
 
-def test_demo_graph_has_numeric_equi_and_semantic_joins(client):
+def test_demo_graph_has_numeric_equi_and_semantic_joins(client, monkeypatch):
+    monkeypatch.setattr("semdisc.join_graph.random.choice", lambda candidates: candidates[-1])
     dataset_id = client.get("/api/demo/datalake").get_json()["datasetId"]
     client.post(
         "/api/preprocess",
@@ -80,6 +111,7 @@ def test_demo_graph_has_numeric_equi_and_semantic_joins(client):
     # produce equi-joins; text business keys join semantically.
     assert counts.get("equi", 0) >= 1
     assert counts.get("semantic", 0) >= 1
+    assert len({tuple(sorted([edge["left"], edge["right"]])) for edge in edges}) == len(edges)
 
     def pairs(join_type):
         return {
@@ -89,8 +121,7 @@ def test_demo_graph_has_numeric_equi_and_semantic_joins(client):
         }
 
     equi = pairs("equi")
-    assert frozenset({("customers", "customer_no"), ("orders", "customer_no")}) in equi
-    assert frozenset({("products", "product_no"), ("order_items", "product_no")}) in equi
+    assert frozenset({("orders", "order_no"), ("order_items", "order_no")}) in equi
 
     semantic = pairs("semantic")
     assert any(
@@ -116,7 +147,8 @@ def test_demo_graph_has_numeric_equi_and_semantic_joins(client):
     )
 
 
-def test_semantic_type_threshold_filters_edges(client):
+def test_semantic_type_threshold_filters_edges(client, monkeypatch):
+    monkeypatch.setattr("semdisc.join_graph.random.choice", lambda candidates: candidates[-1])
     dataset_id = client.get("/api/demo/datalake").get_json()["datasetId"]
     # Threshold above the max achievable similarity (exact match == 1.0)
     # must drop every semantic edge. Numeric equi-joins are unaffected

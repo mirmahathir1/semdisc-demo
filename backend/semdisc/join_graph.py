@@ -97,7 +97,9 @@ SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
 
 QUERY_SEMANTIC_COLUMN_MAP = {
     # orders data lake
+    "Order ID": "order_id",
     "Order Identifier": "order_id",
+    "Customer ID": "customer_id",
     "Customer IDs": "customer_id",
     "Customer Identifier": "customer_id",
     "Country Name": "country",
@@ -209,21 +211,18 @@ def best_semantic_join_keys_and_score(
     return random.choice(best) if best else None
 
 
-def _append_edge_pairs_by_score(
+def _append_best_edge_pair(
     graph: Dict[str, List[EdgeInfo]],
     edge_pairs: List[Tuple[EdgeInfo, EdgeInfo]],
 ) -> None:
-    by_score: Dict[float, List[Tuple[EdgeInfo, EdgeInfo]]] = defaultdict(list)
-    for forward, reverse in edge_pairs:
-        by_score[forward.score].append((forward, reverse))
+    if not edge_pairs:
+        return
 
-    for score in sorted(by_score, reverse=True):
-        tied = by_score[score]
-        if len(tied) > 1:
-            random.shuffle(tied)
-        for forward, reverse in tied:
-            graph[forward.left].append(forward)
-            graph[reverse.left].append(reverse)
+    best_score = max(forward.score for forward, _ in edge_pairs)
+    tied = [edge_pair for edge_pair in edge_pairs if edge_pair[0].score == best_score]
+    forward, reverse = random.choice(tied)
+    graph[forward.left].append(forward)
+    graph[reverse.left].append(reverse)
 
 
 def build_join_graph(
@@ -270,6 +269,6 @@ def build_join_graph(
                     )
                 )
 
-        _append_edge_pairs_by_score(graph, edge_pairs)
+        _append_best_edge_pair(graph, edge_pairs)
 
     return graph

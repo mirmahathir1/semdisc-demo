@@ -1,10 +1,11 @@
 <script setup>
-import { onMounted } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import EditableQueryTable from '../components/EditableQueryTable.vue'
-import { ensureQueryLoaded, setError, submitCurrentQuery, workflow } from '../stores/workflow'
+import { loadTestQueryTable, setError, submitCurrentQuery, workflow } from '../stores/workflow'
 
 const router = useRouter()
+const selectedTestQuery = ref('')
 
 async function submit() {
   try {
@@ -20,14 +21,17 @@ function selectCell({ rowIndex, column }) {
   workflow.selectedQueryColumn = column
 }
 
-onMounted(async () => {
+async function selectTestQueryTable(event) {
+  const value = event.target.value
+  if (!value) return
   try {
-    if (!workflow.processedReady) return
-    await ensureQueryLoaded()
+    await loadTestQueryTable(value)
   } catch (error) {
     setError(error)
+  } finally {
+    selectedTestQuery.value = ''
   }
-})
+}
 </script>
 
 <template>
@@ -40,6 +44,13 @@ onMounted(async () => {
       <button class="btn btn-primary" type="button" @click="submit">Submit query table</button>
     </div>
     <p class="hint">Column headers are semantic types — edit a header to rename its semantic type.</p>
+    <label class="field query-select" for="test-query-table">
+      <span>Select Test Query Table</span>
+      <select id="test-query-table" v-model="selectedTestQuery" @change="selectTestQueryTable">
+        <option value="" disabled hidden>Query 1</option>
+        <option value="query-1">Query 1</option>
+      </select>
+    </label>
     <EditableQueryTable
       v-model="workflow.query"
       :selected-column="workflow.selectedQueryColumn"

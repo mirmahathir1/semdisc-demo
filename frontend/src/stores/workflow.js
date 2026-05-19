@@ -139,14 +139,22 @@ export async function refreshDatasetViews() {
 
 export async function ensureQueryLoaded() {
   if (workflow.query.columns.length) return
+  await loadTestQueryTable('query-1')
+}
+
+export async function loadTestQueryTable(value) {
+  if (value !== 'query-1') return
   const payload = await api.getDemoQuery(workflow.selectedDatalake)
   workflow.query = payload.query
   workflow.selectedQueryColumn = workflow.query.columns[0] || null
+  workflow.selectedQueryRow = null
+  workflow.queryId = null
+  workflow.queryPaths = []
+  workflow.materialized = null
 }
 
 export async function submitCurrentQuery() {
   await ensureDatasetReady()
-  await ensureQueryLoaded()
   const result = await api.submitQuery(workflow.datasetId, workflow.query)
   workflow.queryId = result.queryId
   workflow.materialized = null
@@ -174,7 +182,8 @@ export async function materializePath(path, { query = false } = {}) {
   } else {
     payload.datasetId = workflow.datasetId
   }
-  workflow.materialized = await api.materialize(payload)
+  const result = await api.materialize(payload)
+  workflow.materialized = { ...result, source: payload }
 }
 
 export function resetWorkflow() {

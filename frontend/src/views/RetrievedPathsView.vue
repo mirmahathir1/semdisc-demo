@@ -100,6 +100,14 @@ onMounted(async () => {
         <h2>Retrieved Join Paths</h2>
         <p>{{ visiblePaths.length }} shown</p>
       </div>
+      <div class="retrieved-legend" aria-label="Retrieved path legend">
+        <span><i class="edge-swatch edge-swatch-equi"></i>Equi-join</span>
+        <span><i class="edge-swatch edge-swatch-semantic"></i>Semantic join</span>
+        <span><i class="legend-chip legend-chip-all"></i>All query tuples</span>
+        <span><i class="legend-chip legend-chip-some"></i>Some query tuples</span>
+        <span><i class="legend-node legend-node-query"></i>Query-column table</span>
+        <span><i class="legend-node legend-node-selected"></i>Selected-column table</span>
+      </div>
       <div class="split">
         <PathList
           :paths="visiblePaths"
@@ -110,7 +118,9 @@ onMounted(async () => {
         <PathDetail
           :path="selectedPath"
           :busy="busy"
+          :graph-edges="workflow.graph.edges"
           :highlight-column="workflow.selectedQueryColumn"
+          :query-columns="workflow.query.columns"
           :table-columns="tableColumns"
           @materialize="materialize"
         />

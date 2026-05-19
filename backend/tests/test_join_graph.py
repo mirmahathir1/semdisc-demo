@@ -60,17 +60,34 @@ def test_build_join_graph_creates_bidirectional_numeric_edges():
     assert graph["orders"][0].join_type == "equi"
 
 
-def test_equal_score_equi_and_semantic_edges_do_not_force_equi_first(monkeypatch):
+def test_one_best_edge_per_node_pair_randomly_breaks_score_ties(monkeypatch):
     tables = {
         "left": pd.DataFrame({"business_id": ["A", "B"], "record_no": [1, 2]}),
         "right": pd.DataFrame({"business_id": ["A", "B"], "record_no": [1, 2]}),
     }
     monkeypatch.setitem(SEMANTIC_TYPES, ("left", "business_id"), "Business Identifier")
     monkeypatch.setitem(SEMANTIC_TYPES, ("right", "business_id"), "Business Identifier")
-    monkeypatch.setattr("semdisc.join_graph.random.shuffle", lambda candidates: candidates.reverse())
+    monkeypatch.setattr("semdisc.join_graph.random.choice", lambda candidates: candidates[-1])
 
     graph = build_join_graph(tables, min_edge_score=0.8)
     paths = simple_paths_topk(graph, start="left", max_hops=1, k=1)
 
+    assert len(graph["left"]) == 1
+    assert len(graph["right"]) == 1
     assert graph["left"][0].join_type == "semantic"
     assert paths[0][2][0].join_type == "semantic"
+
+
+def test_one_best_edge_per_node_pair_keeps_higher_score(monkeypatch):
+    tables = {
+        "left": pd.DataFrame({"business_id": ["A", "B"], "record_no": [1, 2]}),
+        "right": pd.DataFrame({"business_id": ["A", "C"], "record_no": [1, 2]}),
+    }
+    monkeypatch.setitem(SEMANTIC_TYPES, ("left", "business_id"), "Business Identifier")
+    monkeypatch.setitem(SEMANTIC_TYPES, ("right", "business_id"), "Business Identifier")
+
+    graph = build_join_graph(tables, min_edge_score=0.1)
+
+    assert len(graph["left"]) == 1
+    assert graph["left"][0].join_type == "equi"
+    assert graph["left"][0].score == 1.0

@@ -4,6 +4,10 @@ import { computed } from 'vue'
 const props = defineProps({
   graph: Object,
   path: Object,
+  graphEdges: {
+    type: Array,
+    default: () => []
+  },
   title: {
     type: String,
     default: 'Join Graph'
@@ -12,9 +16,17 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  showLegend: {
+    type: Boolean,
+    default: true
+  },
   highlightColumn: {
     type: String,
     default: null
+  },
+  queryColumns: {
+    type: Array,
+    default: () => []
   },
   tableColumns: {
     type: Object,
@@ -37,7 +49,7 @@ const nodes = computed(() => {
 })
 
 const edges = computed(() => {
-  if (props.path) return props.path.edges || []
+  if (props.path) return pathEdgesFromGraph()
   return props.graph?.edges || []
 })
 
@@ -152,6 +164,32 @@ const renderedEdges = computed(() => {
   return out
 })
 
+function edgePairKey(edge) {
+  return [edge.left, edge.right].slice().sort().join('::')
+}
+
+function pathEdgesFromGraph() {
+  const pathEdges = props.path?.edges || []
+  const graphEdgeByPair = new Map()
+  ;(props.graphEdges || []).forEach((edge) => {
+    const pair = edgePairKey(edge)
+    const current = graphEdgeByPair.get(pair)
+    if (!current || Number(edge.score || 0) > Number(current.score || 0)) {
+      graphEdgeByPair.set(pair, edge)
+    }
+  })
+
+  const picked = new Map()
+  pathEdges.forEach((edge) => {
+    const pair = edgePairKey(edge)
+    const current = picked.get(pair)
+    if (!current || Number(edge.score || 0) > Number(current.score || 0)) {
+      picked.set(pair, graphEdgeByPair.get(pair) || edge)
+    }
+  })
+  return [...picked.values()]
+}
+
 function edgeType(edge) {
   return String(edge?.joinType || edge?.join_type || 'equi').toLowerCase()
 }
@@ -164,28 +202,86 @@ function edgeLabel(edge) {
   return `${edge.key} / ${edge.rightKey || edge.right_key || edge.key}`
 }
 
+const QUERY_COLUMN_ALIASES = {
+  'order id': ['order_id'],
+  'order identifier': ['order_id'],
+  'customer id': ['customer_id'],
+  'customer ids': ['customer_id'],
+  'customer identifier': ['customer_id'],
+  'country name': ['country'],
+  'currency code': ['currency'],
+  'continent name': ['continent']
+}
+
 function normalizedColumn(column) {
   return String(column || '').trim().toLowerCase()
 }
 
-function nodeHasHighlightColumn(node) {
+function compactColumn(column) {
+  return normalizedColumn(column).replace(/[^a-z0-9]+/g, '')
+}
+
+function columnMatchKeys(column) {
+  const normalized = normalizedColumn(column)
+  const compact = compactColumn(column)
+  return new Set([normalized, compact].filter(Boolean))
+}
+
+function highlightColumnMatchKeys() {
   const selected = normalizedColumn(props.highlightColumn)
-  if (!selected || node.id === 'query') return false
-  return (node.columns || []).some((column) => normalizedColumn(column) === selected)
+  if (!selected) return new Set()
+
+  const keys = columnMatchKeys(selected)
+  ;(QUERY_COLUMN_ALIASES[selected] || []).forEach((alias) => {
+    columnMatchKeys(alias).forEach((key) => keys.add(key))
+  })
+  return keys
+}
+
+function queryColumnMatchKeys() {
+  const keys = new Set()
+  const queryColumns = props.queryColumns.length ? props.queryColumns : props.tableColumns?.query || []
+  queryColumns.forEach((column) => {
+    const normalized = normalizedColumn(column)
+    columnMatchKeys(normalized).forEach((key) => keys.add(key))
+    ;(QUERY_COLUMN_ALIASES[normalized] || []).forEach((alias) => {
+      columnMatchKeys(alias).forEach((key) => keys.add(key))
+    })
+  })
+  return keys
+}
+
+function nodeMatchesKeys(node, keys) {
+  if (!keys.size || node.id === 'query') return false
+  return (node.columns || []).some((column) =>
+    [...columnMatchKeys(column)].some((key) => keys.has(key))
+  )
+}
+
+function nodeHasHighlightColumn(node) {
+  return nodeMatchesKeys(node, highlightColumnMatchKeys())
+}
+
+function nodeHasQueryColumn(node) {
+  return nodeMatchesKeys(node, queryColumnMatchKeys())
 }
 
 function nodeFill(node) {
   if (nodeHasHighlightColumn(node)) return '#dcfce7'
+  if (nodeHasQueryColumn(node)) return '#f0fdf4'
   return node.id === 'query' ? '#dbeafe' : '#f8fafc'
 }
 
 function nodeStroke(node) {
   if (nodeHasHighlightColumn(node)) return '#16a34a'
+  if (nodeHasQueryColumn(node)) return '#86efac'
   return node.id === 'query' ? '#2563eb' : '#64748b'
 }
 
 function nodeStrokeWidth(node) {
-  return nodeHasHighlightColumn(node) ? 2.75 : 1.5
+  if (nodeHasHighlightColumn(node)) return 2.75
+  if (nodeHasQueryColumn(node)) return 2
+  return 1.5
 }
 </script>
 
@@ -223,7 +319,7 @@ function nodeStrokeWidth(node) {
         </g>
       </svg>
     </div>
-    <div class="graph-legend" aria-label="Join edge types">
+    <div v-if="showLegend" class="graph-legend" aria-label="Join edge types">
       <span><i class="edge-swatch edge-swatch-equi"></i>Equi-join</span>
       <span><i class="edge-swatch edge-swatch-semantic"></i>Semantic join</span>
     </div>

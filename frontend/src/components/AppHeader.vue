@@ -44,7 +44,6 @@ onMounted(async () => {
 <template>
   <header class="app-header">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">S</span>
       <div>
         <h1>SemDisc</h1>
         <span>Semantic join discovery</span>

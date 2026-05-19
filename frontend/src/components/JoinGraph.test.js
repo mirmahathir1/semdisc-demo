@@ -7,8 +7,11 @@ describe('JoinGraph', () => {
     const wrapper = mount(JoinGraph, {
       props: {
         defaultOpen: true,
-        path: {
-          nodes: ['customers', 'orders'],
+        graph: {
+          nodes: [
+            { id: 'customers', label: 'customers' },
+            { id: 'orders', label: 'orders' }
+          ],
           edges: [
             {
               left: 'customers',
@@ -37,6 +40,69 @@ describe('JoinGraph', () => {
     expect(wrapper.text()).toContain('Equi-join')
     expect(wrapper.text()).toContain('1 equi')
     expect(wrapper.text()).toContain('1 semantic')
+  })
+
+  it('can hide the edge legend when another view owns the legend', () => {
+    const wrapper = mount(JoinGraph, {
+      props: {
+        defaultOpen: true,
+        showLegend: false,
+        path: {
+          nodes: ['customers', 'orders'],
+          edges: [
+            {
+              left: 'customers',
+              right: 'orders',
+              key: 'customer_id',
+              rightKey: 'customer_id',
+              joinType: 'semantic'
+            }
+          ]
+        }
+      }
+    })
+
+    expect(wrapper.text()).not.toContain('Semantic join')
+  })
+
+  it('shows only the graph-surviving edge for each path node pair', () => {
+    const wrapper = mount(JoinGraph, {
+      props: {
+        defaultOpen: true,
+        graphEdges: [
+          {
+            left: 'customers',
+            right: 'orders',
+            key: 'customer_no',
+            rightKey: 'customer_no',
+            joinType: 'equi'
+          }
+        ],
+        path: {
+          nodes: ['customers', 'orders'],
+          edges: [
+            {
+              left: 'customers',
+              right: 'orders',
+              key: 'customer_id',
+              rightKey: 'customer_id',
+              joinType: 'semantic'
+            },
+            {
+              left: 'customers',
+              right: 'orders',
+              key: 'customer_no',
+              rightKey: 'customer_no',
+              joinType: 'equi'
+            }
+          ]
+        }
+      }
+    })
+
+    expect(wrapper.findAll('path')).toHaveLength(1)
+    expect(wrapper.text()).toContain('customer_no / customer_no')
+    expect(wrapper.text()).not.toContain('customer_id / customer_id')
   })
 
   it('fans parallel edges between the same node pair apart instead of stacking them', () => {
@@ -109,5 +175,89 @@ describe('JoinGraph', () => {
     expect(rects[0].attributes('fill')).toBe('#dcfce7')
     expect(rects[0].attributes('stroke')).toBe('#16a34a')
     expect(rects[1].attributes('fill')).toBe('#f8fafc')
+  })
+
+  it('highlights tables when selected query columns use display labels', () => {
+    const wrapper = mount(JoinGraph, {
+      props: {
+        defaultOpen: true,
+        highlightColumn: 'Order ID',
+        tableColumns: {
+          query: ['Order ID'],
+          orders: ['order_id', 'customer_id'],
+          shipments: ['order_id'],
+          customers: ['customer_id']
+        },
+        path: {
+          nodes: ['query', 'orders', 'shipments', 'customers'],
+          edges: [
+            {
+              left: 'orders',
+              right: 'shipments',
+              key: 'order_id',
+              rightKey: 'order_id',
+              joinType: 'semantic'
+            },
+            {
+              left: 'orders',
+              right: 'customers',
+              key: 'customer_id',
+              rightKey: 'customer_id',
+              joinType: 'semantic'
+            }
+          ]
+        }
+      }
+    })
+
+    const rects = wrapper.findAll('rect')
+
+    expect(rects[0].attributes('fill')).toBe('#dbeafe')
+    expect(rects[1].attributes('fill')).toBe('#dcfce7')
+    expect(rects[2].attributes('fill')).toBe('#dcfce7')
+    expect(rects[3].attributes('fill')).toBe('#f8fafc')
+  })
+
+  it('uses light green for any query-column match and stronger green for the selected column', () => {
+    const wrapper = mount(JoinGraph, {
+      props: {
+        defaultOpen: true,
+        highlightColumn: 'Order ID',
+        queryColumns: ['Order ID', 'Customer ID'],
+        tableColumns: {
+          orders: ['order_id', 'customer_id'],
+          shipments: ['order_id'],
+          customers: ['customer_id'],
+          products: ['product_id']
+        },
+        path: {
+          nodes: ['orders', 'shipments', 'customers', 'products'],
+          edges: [
+            {
+              left: 'orders',
+              right: 'shipments',
+              key: 'order_id',
+              rightKey: 'order_id',
+              joinType: 'semantic'
+            },
+            {
+              left: 'orders',
+              right: 'customers',
+              key: 'customer_id',
+              rightKey: 'customer_id',
+              joinType: 'semantic'
+            }
+          ]
+        }
+      }
+    })
+
+    const rects = wrapper.findAll('rect')
+
+    expect(rects[0].attributes('fill')).toBe('#dcfce7')
+    expect(rects[1].attributes('fill')).toBe('#dcfce7')
+    expect(rects[2].attributes('fill')).toBe('#f0fdf4')
+    expect(rects[2].attributes('stroke')).toBe('#86efac')
+    expect(rects[3].attributes('fill')).toBe('#f8fafc')
   })
 })

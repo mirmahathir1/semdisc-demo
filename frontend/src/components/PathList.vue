@@ -20,6 +20,7 @@ function edgeCount(path, type) {
 function tupleCoverageLabel(path) {
   if (!path.queryTupleCount) return ''
   const matched = path.matchedQueryTupleCount || 0
+  if (path.queryTupleCoverage === 'all') return `all ${matched}/${path.queryTupleCount} query tuples`
   if (path.queryTupleCoverage === 'some') return `some ${matched}/${path.queryTupleCount} query tuples`
   return ''
 }
@@ -38,6 +39,7 @@ function containsSelectedQueryRow(path) {
       class="path-row"
       :class="{
         selected: path.id === selectedId,
+        'all-tuples': path.queryTupleCoverage === 'all',
         'some-tuples': path.queryTupleCoverage === 'some',
         'contains-selected-query-row': containsSelectedQueryRow(path)
       }"
