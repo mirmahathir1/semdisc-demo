@@ -60,7 +60,9 @@ onMounted(async () => {
         </select>
       </label>
       <HyperparameterControls v-model="workflow.hyperparameters" />
-      <button class="btn btn-primary" type="button" @click="preprocess">Preprocess</button>
+      <button class="btn btn-primary" type="button" :disabled="workflow.isPopulating" @click="preprocess">
+        {{ workflow.isPopulating ? 'Preprocessing' : 'Preprocess' }}
+      </button>
       <button class="btn btn-secondary" type="button" @click="reset">Reset</button>
     </div>
   </header>

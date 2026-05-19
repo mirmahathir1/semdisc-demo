@@ -31,6 +31,7 @@ const emit = defineEmits(['materialize'])
     <JoinGraph
       :path="path"
       title="Path Graph"
+      default-open
       :highlight-column="highlightColumn"
       :table-columns="tableColumns"
     />

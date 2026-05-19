@@ -14,6 +14,7 @@ export const workflow = reactive({
   query: { columns: [], rows: [] },
   uploadFiles: [],
   processedReady: false,
+  isPopulating: false,
   selectedTable: null,
   selectedPathId: null,
   selectedQueryRow: null,
@@ -36,10 +37,18 @@ export function setError(error) {
 }
 
 export async function ensureDatasetReady() {
-  if (!workflow.datasetId) {
-    await loadSelectedDatalake()
+  workflow.processedReady = false
+  workflow.isPopulating = true
+  workflow.status = workflow.datasetId ? 'Preprocessing data lake' : 'Loading data lake'
+  try {
+    if (!workflow.datasetId) {
+      await loadSelectedDatalake()
+    }
+    await preprocessCurrentDataset()
+  } catch (error) {
+    workflow.isPopulating = false
+    throw error
   }
-  await preprocessCurrentDataset()
 }
 
 export async function loadDatalakeOptions() {
@@ -62,6 +71,7 @@ export function selectDatalake(name) {
   workflow.queryPaths = []
   workflow.query = { columns: [], rows: [] }
   workflow.processedReady = false
+  workflow.isPopulating = false
   workflow.selectedTable = null
   workflow.selectedPathId = null
   workflow.selectedQueryRow = null
@@ -83,12 +93,18 @@ export async function loadSelectedDatalake() {
 export async function preprocessCurrentDataset() {
   if (!workflow.datasetId) return
   workflow.processedReady = false
+  workflow.isPopulating = true
   workflow.status = 'Preprocessing data lake'
-  const result = await api.preprocess(workflow.datasetId, workflow.hyperparameters)
-  workflow.tables = result.tables || workflow.tables
-  workflow.status = 'Ready'
-  await refreshDatasetViews()
-  workflow.processedReady = true
+  try {
+    const result = await api.preprocess(workflow.datasetId, workflow.hyperparameters)
+    workflow.tables = result.tables || workflow.tables
+    workflow.status = 'Populating page'
+    await refreshDatasetViews()
+    workflow.status = 'Ready'
+    workflow.processedReady = true
+  } finally {
+    workflow.isPopulating = false
+  }
 }
 
 export async function loadUploadedDataset(files) {
@@ -172,6 +188,7 @@ export function resetWorkflow() {
   workflow.navigationPaths = []
   workflow.queryPaths = []
   workflow.processedReady = false
+  workflow.isPopulating = false
   workflow.materialized = null
   workflow.selectedPathId = null
   workflow.selectedQueryRow = null

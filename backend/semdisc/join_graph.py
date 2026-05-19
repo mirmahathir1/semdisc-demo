@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import random
 from collections import defaultdict
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -16,24 +17,33 @@ SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
     ("customers", "customer_id"): "Customer Identifier",
     ("customers", "name"): "Customer Full Name",
     ("customers", "country"): "Customer Country",
+    ("customers", "customer_no"): "Customer Number",
     ("orders", "order_id"): "Order Identifier",
     ("orders", "customer_id"): "Customer Identifier",
     ("orders", "order_date"): "Order Date",
     ("orders", "ship_country"): "Customer Country",
     ("orders", "preferred_carrier"): "Carrier Name",
+    ("orders", "customer_no"): "Customer Number",
+    ("orders", "order_no"): "Order Number",
     ("order_items", "order_id"): "Order Identifier",
     ("order_items", "product_id"): "Product Identifier",
     ("order_items", "qty"): "Quantity Ordered",
     ("order_items", "item_label"): "Product Name",
+    ("order_items", "product_no"): "Product Number",
+    ("order_items", "order_no"): "Order Number",
     ("products", "product_id"): "Product Identifier",
     ("products", "product"): "Product Name",
     ("products", "category_id"): "Product Category Identifier",
     ("products", "product_family"): "Product Category Name",
+    ("products", "product_no"): "Product Number",
+    ("products", "category_no"): "Product Category Number",
     ("categories", "category_id"): "Product Category Identifier",
     ("categories", "category"): "Product Category Name",
+    ("categories", "category_no"): "Product Category Number",
     ("shipments", "order_id"): "Order Identifier",
     ("shipments", "shipment_id"): "Shipment Identifier",
     ("shipments", "carrier"): "Carrier Name",
+    ("shipments", "order_no"): "Order Number",
     # country data lake
     ("GDP_Per_Capita_Completed", "country"): "Country Name",
     ("GDP_Per_Capita_Completed", "gdp (in trillions USD)"): "Country GDP (Trillions USD)",
@@ -125,7 +135,8 @@ def best_join_key_and_score(
     if not common_cols:
         return None
 
-    best: Optional[Tuple[str, float]] = None
+    best_score: Optional[float] = None
+    best: List[Tuple[str, float]] = []
     for col in common_cols:
         left_sig = column_minhashes.get(left_name, {}).get(col)
         right_sig = column_minhashes.get(right_name, {}).get(col)
@@ -136,9 +147,12 @@ def best_join_key_and_score(
         if not (left_sig.is_numeric and right_sig.is_numeric):
             continue
         score = minhash_jaccard(left_sig.minhash, right_sig.minhash)
-        if best is None or score > best[1]:
-            best = (col, float(score))
-    return best
+        if best_score is None or score > best_score:
+            best_score = score
+            best = [(col, float(score))]
+        elif score == best_score:
+            best.append((col, float(score)))
+    return random.choice(best) if best else None
 
 
 def semantic_type_similarity(type_a: str, type_b: str) -> float:
@@ -159,7 +173,8 @@ def best_semantic_join_keys_and_score(
     column_minhashes: Dict[str, Dict[str, object]],
     semantic_type_threshold: float = 0.7,
 ) -> Optional[Tuple[str, str, float]]:
-    best: Optional[Tuple[str, str, float]] = None
+    best_score: Optional[float] = None
+    best: List[Tuple[str, str, float]] = []
 
     for lc in map(str, left.columns):
         left_type = SEMANTIC_TYPES.get((left_name, lc))
@@ -185,10 +200,30 @@ def best_semantic_join_keys_and_score(
             if left_sig.is_numeric or right_sig.is_numeric:
                 continue
             score = minhash_jaccard(left_sig.minhash, right_sig.minhash)
-            if best is None or score > best[2]:
-                best = (lc, rc, float(score))
+            if best_score is None or score > best_score:
+                best_score = score
+                best = [(lc, rc, float(score))]
+            elif score == best_score:
+                best.append((lc, rc, float(score)))
 
-    return best
+    return random.choice(best) if best else None
+
+
+def _append_edge_pairs_by_score(
+    graph: Dict[str, List[EdgeInfo]],
+    edge_pairs: List[Tuple[EdgeInfo, EdgeInfo]],
+) -> None:
+    by_score: Dict[float, List[Tuple[EdgeInfo, EdgeInfo]]] = defaultdict(list)
+    for forward, reverse in edge_pairs:
+        by_score[forward.score].append((forward, reverse))
+
+    for score in sorted(by_score, reverse=True):
+        tied = by_score[score]
+        if len(tied) > 1:
+            random.shuffle(tied)
+        for forward, reverse in tied:
+            graph[forward.left].append(forward)
+            graph[reverse.left].append(reverse)
 
 
 def build_join_graph(
@@ -209,12 +244,18 @@ def build_join_graph(
         )
 
     for a, b in itertools.combinations(names, 2):
+        edge_pairs: List[Tuple[EdgeInfo, EdgeInfo]] = []
+
         best_equi = best_join_key_and_score(a, tables[a], b, tables[b], column_minhashes)
         if best_equi is not None:
             key, score = best_equi
             if score >= min_edge_score:
-                graph[a].append(EdgeInfo(a, b, key, score, key, "equi"))
-                graph[b].append(EdgeInfo(b, a, key, score, key, "equi"))
+                edge_pairs.append(
+                    (
+                        EdgeInfo(a, b, key, score, key, "equi"),
+                        EdgeInfo(b, a, key, score, key, "equi"),
+                    )
+                )
 
         best_sem = best_semantic_join_keys_and_score(
             a, tables[a], b, tables[b], column_minhashes, semantic_type_threshold
@@ -222,7 +263,13 @@ def build_join_graph(
         if best_sem is not None:
             left_key, right_key, score = best_sem
             if score >= min_edge_score:
-                graph[a].append(EdgeInfo(a, b, left_key, score, right_key, "semantic"))
-                graph[b].append(EdgeInfo(b, a, right_key, score, left_key, "semantic"))
+                edge_pairs.append(
+                    (
+                        EdgeInfo(a, b, left_key, score, right_key, "semantic"),
+                        EdgeInfo(b, a, right_key, score, left_key, "semantic"),
+                    )
+                )
+
+        _append_edge_pairs_by_score(graph, edge_pairs)
 
     return graph

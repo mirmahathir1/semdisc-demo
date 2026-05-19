@@ -93,9 +93,27 @@ def test_demo_graph_has_numeric_equi_and_semantic_joins(client):
     assert frozenset({("products", "product_no"), ("order_items", "product_no")}) in equi
 
     semantic = pairs("semantic")
-    assert frozenset({("customers", "customer_id"), ("orders", "customer_id")}) in semantic
-    assert frozenset({("products", "product_id"), ("order_items", "product_id")}) in semantic
-    assert frozenset({("orders", "preferred_carrier"), ("shipments", "carrier")}) in semantic
+    assert any(
+        pair in semantic
+        for pair in [
+            frozenset({("customers", "customer_id"), ("orders", "customer_id")}),
+            frozenset({("customers", "country"), ("orders", "ship_country")}),
+        ]
+    )
+    assert any(
+        pair in semantic
+        for pair in [
+            frozenset({("products", "product_id"), ("order_items", "product_id")}),
+            frozenset({("products", "product"), ("order_items", "item_label")}),
+        ]
+    )
+    assert any(
+        pair in semantic
+        for pair in [
+            frozenset({("orders", "preferred_carrier"), ("shipments", "carrier")}),
+            frozenset({("orders", "order_id"), ("shipments", "order_id")}),
+        ]
+    )
 
 
 def test_semantic_type_threshold_filters_edges(client):
@@ -124,6 +142,22 @@ def test_semantic_type_threshold_filters_edges(client):
     )
     edges = client.get(f"/api/datasets/{dataset_id}/graph").get_json()["graph"]["edges"]
     assert any(e["joinType"] == "semantic" for e in edges)
+
+
+def test_bundled_datalake_columns_have_semantic_types(client):
+    datalakes = client.get("/api/datalakes").get_json()["datalakes"]
+
+    for name in datalakes:
+        dataset_id = client.get(f"/api/datalakes/{name}").get_json()["datasetId"]
+        payload = client.get(f"/api/datasets/{dataset_id}/semantic-types").get_json()
+        unknown = [
+            f"{table}.{item['column']}"
+            for table, items in payload["semanticTypes"].items()
+            for item in items
+            if item["semanticType"] == "Unknown"
+        ]
+
+        assert unknown == []
 
 
 def test_unknown_dataset_returns_json_error(client):
