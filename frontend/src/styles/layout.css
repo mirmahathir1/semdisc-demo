@@ -1,0 +1,728 @@
+.app-header {
+  min-height: 78px;
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 20px;
+  background: #ffffff;
+  border-bottom: 1px solid #dbe3ee;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 1.35rem;
+  font-weight: 900;
+}
+
+.brand h1 {
+  font-size: 1.35rem;
+  line-height: 1.05;
+}
+
+.brand span {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.header-controls {
+  display: grid;
+  grid-template-columns: minmax(132px, 160px) 1fr auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.upload-button {
+  min-height: 36px;
+  border-radius: 6px;
+  padding: 0 12px;
+  background: #eef2ff;
+  color: #3730a3;
+  border: 1px solid #c7d2fe;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+}
+
+.datalake-select {
+  align-self: stretch;
+  gap: 4px;
+}
+
+.datalake-select span {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.upload-button input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hp-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(116px, 1fr));
+  gap: 8px;
+  align-items: end;
+}
+
+.hp-grid label {
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "label value"
+    "slider slider";
+  align-items: center;
+  gap: 3px 6px;
+  min-width: 0;
+}
+
+.hp-grid input[type='range'] {
+  grid-area: slider;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+}
+
+.hp-grid label span {
+  grid-area: label;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hp-grid label b {
+  grid-area: value;
+  color: #0f172a;
+  font-size: 0.78rem;
+  justify-self: end;
+}
+
+.app-shell {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 18px 20px 32px;
+}
+
+.stage-stepper {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 18px;
+  padding-top: 12px;
+}
+
+.stage-line {
+  position: absolute;
+  top: 19px;
+  left: 0;
+  right: 0;
+  height: 5px;
+  background: #e2e8f0;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.stage-line span {
+  display: block;
+  height: 100%;
+  background: #2563eb;
+}
+
+.stage {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-weight: 800;
+  font-size: 0.88rem;
+}
+
+.stage-dot {
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border: 3px solid #94a3b8;
+  border-radius: 999px;
+}
+
+.stage.active,
+.stage.done {
+  color: #111827;
+}
+
+.stage.active .stage-dot,
+.stage.done .stage-dot {
+  border-color: #1d4ed8;
+  background: #2563eb;
+}
+
+.view-grid,
+.retrieved-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.sidebar-pane,
+.main-pane,
+.query-editor,
+.preview-band,
+.path-detail,
+.materialized {
+  background: #fff;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  padding: 14px;
+  /* Allow grid/flex children to shrink below their content's intrinsic
+     width so wide tables scroll inside .table-wrap instead of stretching
+     the layout and adding a page-level horizontal scrollbar. */
+  min-width: 0;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.section-heading h2 {
+  font-size: 1rem;
+}
+
+.section-heading p {
+  color: #64748b;
+  font-size: 0.84rem;
+}
+
+.hint {
+  margin-bottom: 12px;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+
+.table-wrap {
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  max-height: 460px;
+}
+
+.table-wrap.compact {
+  max-height: 260px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+}
+
+th,
+td {
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  vertical-align: top;
+}
+
+th {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: #475569;
+  font-weight: 900;
+}
+
+th.column-selectable {
+  padding: 0;
+}
+
+th.column-selected {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.column-header-btn {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+
+.column-header-btn:hover,
+.column-header-btn:focus-visible {
+  background: #ecfdf5;
+}
+
+tr.row-selectable {
+  cursor: pointer;
+}
+
+tr.row-selectable:hover td,
+tr.row-selectable:focus-visible td {
+  background: #f0fdf4;
+}
+
+tr.row-selected td {
+  background: #dcfce7;
+  color: #14532d;
+  font-weight: 800;
+}
+
+td input {
+  width: 100%;
+  border: 0;
+  min-height: 30px;
+  padding: 4px;
+}
+
+.thin {
+  width: 34px;
+}
+
+/* Query table panel is intentionally half-width; the table fills the panel
+   and .table-wrap still scrolls horizontally when columns overflow. */
+.query-editor {
+  max-width: 50%;
+  min-width: min(100%, 520px);
+  margin-inline: auto;
+}
+
+.editable-table {
+  max-width: 100%;
+}
+
+.table-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.semantic-th-input {
+  min-width: 130px;
+  font-weight: 800;
+  color: #334155;
+}
+
+.semantic-th.column-selected .semantic-th-input {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.semantic-list {
+  margin: 14px 0;
+  display: grid;
+  gap: 8px;
+}
+
+.semantic-list h3 {
+  font-size: 0.92rem;
+}
+
+.semantic-list p {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.semantic-list span,
+.attribute-strip span {
+  display: inline-flex;
+  border: 1px solid #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-weight: 800;
+  font-size: 0.76rem;
+}
+
+.heatmap-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.heatmap-yaxis {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: #334155;
+  letter-spacing: 0.02em;
+}
+
+.heatmap-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.heatmap-xaxis {
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: #334155;
+  letter-spacing: 0.02em;
+  padding-bottom: 6px;
+}
+
+.heatmap-grid {
+  --node-columns: 1;
+  display: grid;
+  grid-template-columns: minmax(72px, 1.25fr) repeat(var(--node-columns), minmax(28px, 1fr));
+  gap: 0;
+  overflow: visible;
+  align-items: stretch;
+}
+
+.heatmap-header,
+.heatmap-bin {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  font-size: 0.74rem;
+  font-weight: 900;
+  min-width: 0;
+}
+
+.heatmap-header {
+  justify-content: center;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #dbe3ee;
+}
+
+.heatmap-corner {
+  background: transparent;
+}
+
+.heatmap-bin {
+  justify-content: flex-start;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.heatmap-cell {
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid #ffffff;
+  /* Highest count -> darkest blue, fading down to a pale blue. */
+  background: color-mix(in srgb, #1e3a8a calc(10% + var(--intensity) * 90%), #eff6ff);
+}
+
+.heatmap-cell:disabled {
+  cursor: default;
+  background: #f1f5f9;
+  border-color: #e9eef5;
+}
+
+.heatmap-cell.selected {
+  outline: 2px solid #f59e0b;
+  outline-offset: -2px;
+  position: relative;
+  z-index: 1;
+}
+
+.graph-scroll {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.graph-panel {
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.graph-panel summary {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  cursor: pointer;
+  font-weight: 900;
+  color: #0f172a;
+  list-style: none;
+}
+
+.graph-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.graph-panel summary::before {
+  content: '>';
+  color: #2563eb;
+  font-size: 0.9rem;
+  margin-right: 2px;
+}
+
+.graph-panel[open] summary {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.graph-panel[open] summary::before {
+  content: 'v';
+}
+
+.graph-panel summary span {
+  flex: 1;
+}
+
+.graph-panel summary small {
+  color: #64748b;
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.graph-panel .graph-scroll {
+  border: 0;
+  border-radius: 0;
+}
+
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 9px 14px 12px;
+  border-top: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.graph-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.edge-swatch {
+  width: 26px;
+  height: 0;
+  border-top: 3px solid #2563eb;
+  display: inline-block;
+}
+
+.edge-swatch-semantic {
+  border-top-color: #f97316;
+}
+
+.node-label {
+  font-size: 12px;
+  font-weight: 800;
+  fill: #0f172a;
+}
+
+.edge-label {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #475569;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 4px;
+}
+
+.path-list {
+  display: grid;
+  gap: 8px;
+  max-height: 560px;
+  overflow: auto;
+}
+
+.path-row {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 4px 10px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid #dbe3ee;
+  border-radius: 6px;
+  background: #fff;
+  padding: 10px;
+}
+
+.path-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.path-row.some-tuples {
+  border-color: #eab308;
+  background: #fffbeb;
+}
+
+.path-row.some-tuples.selected {
+  outline: 2px solid #2563eb;
+  background: #fef3c7;
+}
+
+.path-row.contains-selected-query-row {
+  border-color: #16a34a;
+  background: #dcfce7;
+}
+
+.path-row.contains-selected-query-row.selected {
+  outline: 2px solid #2563eb;
+  background: #bbf7d0;
+}
+
+.path-row.some-tuples.contains-selected-query-row {
+  border-color: #16a34a;
+  background: #dcfce7;
+}
+
+.path-row span {
+  color: #64748b;
+  font-weight: 900;
+}
+
+.path-row b {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.path-row small {
+  grid-column: 2;
+  color: #64748b;
+}
+
+.path-edge-mix {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tuple-chip {
+  grid-column: 2;
+  display: inline-flex;
+  width: fit-content;
+  min-height: 22px;
+  align-items: center;
+  border: 1px solid #fde68a;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #92400e;
+  padding: 2px 8px;
+  font-style: normal;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.edge-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-style: normal;
+  font-size: 0.74rem;
+  font-weight: 900;
+  border: 1px solid transparent;
+}
+
+.edge-chip-equi {
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.edge-chip-semantic {
+  color: #c2410c;
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.path-detail {
+  display: grid;
+  gap: 12px;
+}
+
+.attribute-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.materialized,
+.preview-band {
+  margin-top: 16px;
+}
+
+@media (max-width: 1040px) {
+  .app-header,
+  .header-controls,
+  .view-grid,
+  .retrieved-layout,
+  .split {
+    grid-template-columns: 1fr;
+  }
+
+  .hp-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell,
+  .app-header {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .hp-grid {
+    grid-template-columns: 1fr;
+  }
+}

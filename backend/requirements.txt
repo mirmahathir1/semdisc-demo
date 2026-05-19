@@ -1,0 +1,7 @@
+flask>=3.0
+flask-cors>=4.0
+pandas>=2.0
+pytest>=8.0
+sentence-transformers>=2.2
+datasketch>=1.5
+

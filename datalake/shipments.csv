@@ -1,5 +1,0 @@
-order_id,shipment_id,carrier
-O100,S900,DHL
-O101,S901,UPS
-O102,S902,FedEx
-

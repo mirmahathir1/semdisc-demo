@@ -20,5 +20,10 @@ __pycache__/
 # Outputs
 *.log
 materialized.csv
+frontend/node_modules/
+frontend/dist/
 
+# Cached column MinHash signatures (SBERT pipeline)
+.cache/
 
+datalake/
