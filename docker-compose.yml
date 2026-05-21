@@ -1,0 +1,49 @@
+# SemDisc Demo — backend (Flask) + frontend (Vite/Vue) with hot reload.
+#
+# Host ports are chosen to NOT collide with the nldisc project, so both stacks
+# can run at the same time via two separate `docker compose up`:
+#
+#                 semdisc-demo   nldisc
+#   backend            5000        5001
+#   frontend           5173        5174
+#
+# The frontend reaches the backend through Vite's server-side proxy
+# (VITE_PROXY_TARGET) over the internal compose network, so the browser only
+# ever talks to the frontend port.
+
+name: semdisc-demo
+
+services:
+  backend:
+    build:
+      context: ./backend
+    # The backend resolves datalake/.cache/materialized.csv relative to the
+    # repo root (parents[2]), so the WHOLE repo is mounted and we run from
+    # /app/backend. Source edits trigger Flask's reloader.
+    working_dir: /app/backend
+    volumes:
+      - ./:/app
+      # Keep container-built bytecode/caches from leaking to the host mount.
+      - /app/backend/__pycache__
+    ports:
+      - "5000:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - FLASK_DEBUG=1
+
+  frontend:
+    build:
+      context: ./frontend
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume shields the image's node_modules from the host mount.
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      # Vite proxies /api to the backend service over the compose network.
+      - VITE_PROXY_TARGET=http://backend:5000
+      # Helps file watching trigger reliably inside containers.
+      - CHOKIDAR_USEPOLLING=true
+    depends_on:
+      - backend
