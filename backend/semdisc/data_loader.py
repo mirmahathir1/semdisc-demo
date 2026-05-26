@@ -13,6 +13,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATALAKE_DIR = PROJECT_ROOT / "datalake"
 DEFAULT_DATALAKE = "orders"
 
+# Semantic types for uploaded (non-bundled) datasets are cached here, keyed by
+# dataset id. Bundled lakes cache beside their CSVs in DATALAKE_DIR/<name>.
+UPLOADED_SEMANTIC_TYPES_DIR = PROJECT_ROOT / ".cache" / "semantic_types"
+
 
 def read_csv_bytes(b: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(b))
@@ -51,6 +55,11 @@ def _bundled_datalake_cached(name: str | None = None) -> tuple[tuple[str, pd.Dat
 
 def bundled_datalake(name: str | None = None) -> Dict[str, pd.DataFrame]:
     return {name: df.copy() for name, df in _bundled_datalake_cached(name)}
+
+
+def bundled_semantic_types_path(name: str | None = None) -> Path:
+    """Path to the semantic_types.json cache for a bundled data lake."""
+    return _datalake_path(name) / "semantic_types.json"
 
 
 @lru_cache(maxsize=16)

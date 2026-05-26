@@ -30,6 +30,10 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - FLASK_DEBUG=1
+      # Needed only to extract semantic types for a NEW data lake (one with no
+      # semantic_types.json yet). Bundled lakes load from their cached JSON and
+      # never call the LLM. Passed through from the host env if set.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
 
   frontend:
     build:

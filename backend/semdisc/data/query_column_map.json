@@ -1,0 +1,10 @@
+{
+  "Order ID": "order_id",
+  "Order Identifier": "order_id",
+  "Customer ID": "customer_id",
+  "Customer IDs": "customer_id",
+  "Customer Identifier": "customer_id",
+  "Country Name": "country",
+  "Currency Code": "currency",
+  "Continent Name": "continent"
+}

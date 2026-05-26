@@ -2,13 +2,28 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set
 
 import pandas as pd
 
-from .data_loader import bundled_datalake, bundled_query, ensure_nonempty_tables, list_bundled_datalakes
-from .join_graph import QUERY_SEMANTIC_COLUMN_MAP, SEMANTIC_TYPES, build_join_graph, normalize_cell
+from .data_loader import (
+    UPLOADED_SEMANTIC_TYPES_DIR,
+    bundled_datalake,
+    bundled_query,
+    bundled_semantic_types_path,
+    ensure_nonempty_tables,
+    list_bundled_datalakes,
+)
+from .join_graph import (
+    QUERY_SEMANTIC_COLUMN_MAP,
+    SEMANTIC_TYPES,
+    build_join_graph,
+    normalize_cell,
+    register_semantic_types,
+)
 from .models import EdgeInfo
+from .semantic_type_extractor import load_or_extract_semantic_types
 from .paths import PathTuple, materialize_path, simple_paths_topk
 from .serialization import (
     dataframe_to_json,
@@ -35,6 +50,9 @@ class DatasetState:
     graph: Dict[str, List[EdgeInfo]] = field(default_factory=dict)
     preprocessed: bool = False
     hyperparameters: dict = field(default_factory=dict)
+    # Where this dataset's semantic_types.json cache lives (set at creation).
+    semantic_types_path: Optional[Path] = None
+    semantic_types_loaded: bool = False
 
 
 @dataclass
@@ -66,26 +84,55 @@ def _query_or_404(query_id: str) -> QueryState:
         raise ApiError("not_found", f"Query '{query_id}' was not found.", 404) from exc
 
 
-def create_dataset(tables: Dict[str, pd.DataFrame], *, source: str = "uploaded") -> DatasetState:
+def create_dataset(
+    tables: Dict[str, pd.DataFrame],
+    *,
+    source: str = "uploaded",
+    semantic_types_path: Optional[Path] = None,
+) -> DatasetState:
     clean = ensure_nonempty_tables(tables)
     if not clean:
         raise ApiError("empty_dataset", "No non-empty CSV tables were provided.", 400)
     state = DatasetState(id=_new_id("ds"), tables=clean, source=source)
+    # Uploaded datasets cache their extracted semantic types under a stable
+    # per-dataset path so a re-run reuses the JSON instead of calling the LLM.
+    state.semantic_types_path = (
+        semantic_types_path or UPLOADED_SEMANTIC_TYPES_DIR / f"{state.id}.json"
+    )
     DATASETS[state.id] = state
     return state
 
 
 def create_demo_dataset() -> DatasetState:
-    return create_dataset(bundled_datalake(), source="demo")
+    return create_bundled_dataset()
 
 
 def create_bundled_dataset(name: str | None = None) -> DatasetState:
     source = f"bundled:{name}" if name else "bundled"
-    return create_dataset(bundled_datalake(name), source=source)
+    return create_dataset(
+        bundled_datalake(name),
+        source=source,
+        semantic_types_path=bundled_semantic_types_path(name),
+    )
+
+
+def ensure_semantic_types(state: DatasetState) -> DatasetState:
+    """Load (or, on cache miss, extract via LLM) this dataset's semantic types
+    and merge them into the global ``SEMANTIC_TYPES`` map used by the join
+    builder. Runs at most once per dataset."""
+    if state.semantic_types_loaded:
+        return state
+    cache_path = state.semantic_types_path or (
+        UPLOADED_SEMANTIC_TYPES_DIR / f"{state.id}.json"
+    )
+    semantic_types = load_or_extract_semantic_types(state.tables, cache_path)
+    register_semantic_types(semantic_types)
+    state.semantic_types_loaded = True
+    return state
 
 
 def preprocess_dataset(dataset_id: str, hyperparameters: Optional[dict] = None) -> DatasetState:
-    state = _dataset_or_404(dataset_id)
+    state = ensure_semantic_types(_dataset_or_404(dataset_id))
     hyperparameters = dict(hyperparameters or {})
     min_edge_score = float(hyperparameters.get("joinEdgeThreshold", hyperparameters.get("minEdgeScore", 0.1)))
     simhash_size = int(hyperparameters.get("simhashSize", 32))
@@ -146,7 +193,7 @@ def table_preview(dataset_id: str, table_name: str, *, page: int = 1, page_size:
 
 
 def semantic_types_payload(dataset_id: str) -> dict:
-    state = _dataset_or_404(dataset_id)
+    state = ensure_semantic_types(_dataset_or_404(dataset_id))
     payload = {}
     for table_name, df in sorted(state.tables.items()):
         payload[table_name] = [

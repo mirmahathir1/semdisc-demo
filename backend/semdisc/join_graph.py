@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import itertools
+import json
 import random
 from collections import defaultdict
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
@@ -12,101 +14,59 @@ from .semantic_minhash import compute_column_minhashes, semantic_type_cosine
 from .semantic_minhash import jaccard as minhash_jaccard
 
 
-SEMANTIC_TYPES: Dict[Tuple[str, str], str] = {
-    # orders data lake
-    ("customers", "customer_id"): "Customer Identifier",
-    ("customers", "name"): "Customer Full Name",
-    ("customers", "country"): "Customer Country",
-    ("customers", "customer_no"): "Customer Number",
-    ("orders", "order_id"): "Order Identifier",
-    ("orders", "customer_id"): "Customer Identifier",
-    ("orders", "order_date"): "Order Date",
-    ("orders", "ship_country"): "Customer Country",
-    ("orders", "preferred_carrier"): "Carrier Name",
-    ("orders", "customer_no"): "Customer Number",
-    ("orders", "order_no"): "Order Number",
-    ("order_items", "order_id"): "Order Identifier",
-    ("order_items", "product_id"): "Product Identifier",
-    ("order_items", "qty"): "Quantity Ordered",
-    ("order_items", "item_label"): "Product Name",
-    ("order_items", "product_no"): "Product Number",
-    ("order_items", "order_no"): "Order Number",
-    ("products", "product_id"): "Product Identifier",
-    ("products", "product"): "Product Name",
-    ("products", "category_id"): "Product Category Identifier",
-    ("products", "product_family"): "Product Category Name",
-    ("products", "product_no"): "Product Number",
-    ("products", "category_no"): "Product Category Number",
-    ("categories", "category_id"): "Product Category Identifier",
-    ("categories", "category"): "Product Category Name",
-    ("categories", "category_no"): "Product Category Number",
-    ("shipments", "order_id"): "Order Identifier",
-    ("shipments", "shipment_id"): "Shipment Identifier",
-    ("shipments", "carrier"): "Carrier Name",
-    ("shipments", "order_no"): "Order Number",
-    # country data lake
-    ("GDP_Per_Capita_Completed", "country"): "Country Name",
-    ("GDP_Per_Capita_Completed", "gdp (in trillions USD)"): "Country GDP (Trillions USD)",
-    ("GDP_Per_Capita_Completed", "region"): "Continent Name",
-    ("GDP_Per_Capita_Completed", "official_language"): "Official Language",
-    ("GDP_Per_Capita_Completed", "internet_penetration"): "Internet Penetration Percent",
-    ("GDP_Per_Capita_Completed", "currency"): "Currency Code",
-    ("GDP_Per_Capita_Completed", "population_millions"): "Population (Millions)",
-    ("GDP_Per_Capita_Completed", "gdp_per_capita_usd"): "GDP Per Capita USD",
-    ("census_data", "country"): "Country Name",
-    ("census_data", "pop_data"): "Population (Millions)",
-    ("census_data", "data_year"): "Data Year",
-    ("census_data", "source"): "Data Source",
-    ("climate_metrics", "country"): "Country Name",
-    ("climate_metrics", "temperature"): "Average Temperature",
-    ("continent_gdp", "Continent"): "Continent Name",
-    ("continent_gdp", "GDP (in Trillions USD)"): "Continent GDP (Trillions USD)",
-    ("continent_mapping", "country"): "Country Name",
-    ("continent_mapping", "continent"): "Continent Name",
-    ("country_currency_strength", "country"): "Country Name",
-    ("country_currency_strength", "currency"): "Currency Code",
-    ("country_currency_strength", "currency_strength"): "Currency Strength",
-    ("currency", "country"): "Country Name",
-    ("currency", "currency"): "Currency Code",
-    ("economic_metrics", "country"): "Country Name",
-    ("economic_metrics", "inflation_rate_annual_percent"): "Inflation Rate Percent",
-    ("gini_index", "country"): "Country Name",
-    ("gini_index", "gini_coefficient"): "Gini Coefficient",
-    ("global_tourism", "country"): "Country Name",
-    ("global_tourism", "tourism"): "Tourist Arrivals",
-    ("health_indicators", "country"): "Country Name",
-    ("health_indicators", "life_expectancy"): "Life Expectancy",
-    ("health_indicators", "healthcare_expenditures"): "Healthcare Expenditure",
-    ("literacy_rates", "country"): "Country Name",
-    ("literacy_rates", "literacy_rate"): "Literacy Rate Percent",
-    ("literacy_rates", "data_source"): "Data Source",
-    ("renewable_energy", "country"): "Country Name",
-    ("renewable_energy", "renewable_energy_percent"): "Renewable Energy Percent",
-    ("renewable_energy", "data_year"): "Data Year",
-    ("renewable_energy", "source"): "Data Source",
-    ("tech_market_cap", "company"): "Company Name",
-    ("tech_market_cap", "market_cap_billion_usd"): "Market Cap (Billion USD)",
-    ("tech_market_cap", "headquarters"): "Headquarters Country",
-    ("tech_market_cap", "as_of_year"): "Data Year",
-    ("university_acceptance", "university"): "University Name",
-    ("university_acceptance", "acceptance_rate_percent"): "Acceptance Rate Percent",
-    ("university_acceptance", "country"): "Country Name",
-    ("university_acceptance", "latest_data_year"): "Data Year",
-}
+_DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
-QUERY_SEMANTIC_COLUMN_MAP = {
-    # orders data lake
-    "Order ID": "order_id",
-    "Order Identifier": "order_id",
-    "Customer ID": "customer_id",
-    "Customer IDs": "customer_id",
-    "Customer Identifier": "customer_id",
-    "Country Name": "country",
-    # country data lake
-    "Currency Code": "currency",
-    "Continent Name": "continent",
-}
+def _load_bundled_semantic_types() -> Dict[Tuple[str, str], str]:
+    """Load semantic types from every bundled data lake's ``semantic_types.json``.
+
+    Each data lake caches its column semantic types beside its CSVs (see
+    :mod:`semdisc.semantic_type_extractor`). Table names are unique across the
+    bundled lakes, so they share one ``(table, column) -> semantic_type`` map.
+    Missing or unreadable caches are skipped; services may extract and merge
+    types for a data lake at request time via :func:`register_semantic_types`.
+    """
+    # Imported lazily to avoid a circular import (data_loader has no deps here).
+    from .data_loader import DATALAKE_DIR, list_bundled_datalakes
+    from .semantic_type_extractor import SEMANTIC_TYPES_FILENAME, load_semantic_types
+
+    merged: Dict[Tuple[str, str], str] = {}
+    try:
+        lakes = list_bundled_datalakes()
+    except FileNotFoundError:
+        return merged
+    for lake in lakes:
+        cache_path = DATALAKE_DIR / lake / SEMANTIC_TYPES_FILENAME
+        loaded = load_semantic_types(cache_path)
+        if loaded:
+            merged.update(loaded)
+    return merged
+
+
+def register_semantic_types(semantic_types: Dict[Tuple[str, str], str]) -> None:
+    """Merge ``(table, column) -> semantic_type`` entries into the global map.
+
+    Used when a dataset's semantic types are loaded or freshly extracted so the
+    join builder (which reads :data:`SEMANTIC_TYPES`) can see them.
+    """
+    SEMANTIC_TYPES.update(semantic_types)
+
+
+# Populated from the bundled data lakes' JSON caches at import time. Kept as a
+# mutable module-level dict so freshly extracted types can be merged in.
+SEMANTIC_TYPES: Dict[Tuple[str, str], str] = _load_bundled_semantic_types()
+
+
+def _load_query_semantic_column_map() -> Dict[str, str]:
+    """Map query-header aliases to canonical column names (from JSON config)."""
+    path = _DATA_DIR / "query_column_map.json"
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+# Aliases a query column header may use, mapped to the canonical column name
+# used in the data lakes. Sourced from ``data/query_column_map.json``.
+QUERY_SEMANTIC_COLUMN_MAP = _load_query_semantic_column_map()
 
 
 def normalize_cell(x) -> str:
